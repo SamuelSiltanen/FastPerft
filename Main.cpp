@@ -11,6 +11,7 @@
 #include "Make.hpp"
 #include "Perft.hpp"
 #include "TestPositions.hpp"
+#include "FENParser.hpp"
 
 #ifdef COLLECT_STATS
 #include "Stats.hpp"
@@ -30,6 +31,7 @@ struct PerftParams
     int hashTableSize;
     int numberOfWorkers;
     bool collectStats;
+    Position position;
 };
 
 PerftParams parseCommandLine(int argc, char** argv);
@@ -40,17 +42,15 @@ int main(int argc, char** argv)
 {       
     PerftParams params = parseCommandLine(argc, argv);
 
-    Position pos = Position1;
-
 #ifdef HASH_TABLE
     hashTable = new HashTable(params.hashTableSize);
 
-    pos.hash = HashTable::calcHash(pos);
+    params.position.hash = HashTable::calcHash(params.position);
 #endif
 
     fillMoveTables();
     
-    testPerft(pos, params.depth);
+    testPerft(params.position, params.depth);
 
 #ifdef HASH_TABLE
     delete hashTable;
@@ -66,6 +66,7 @@ PerftParams parseCommandLine(int argc, char** argv)
     params.hashTableSize = DefaultHashTableSize;
     params.numberOfWorkers = 8;
     params.collectStats = false;
+    params.position = Position1;
 
     bool failure = false;
 
@@ -107,6 +108,19 @@ PerftParams parseCommandLine(int argc, char** argv)
             break;
         case 's':
             params.collectStats = true;
+            break;
+        case 'f':
+            if (argc <= i + 1)
+            {
+                failure = true;
+                break;
+            }
+            if (!parseFEN(argv[i + 1], params.position))
+            {
+                failure = true;
+                break;
+            }
+            ++i;
             break;
         default:
             failure = true;

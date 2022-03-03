@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClInclude Include="ChessTypes.hpp" />
     <ClInclude Include="Config.hpp" />
+    <ClInclude Include="FENParser.hpp" />
     <ClInclude Include="HashTable.hpp" />
     <ClInclude Include="Make.hpp" />
     <ClInclude Include="MoveGeneration.hpp" />
@@ -35,6 +36,7 @@
     <ClCompile Include="Make.cpp" />
     <ClCompile Include="MoveGeneration.cpp" />
     <ClCompile Include="Perft.cpp" />
+    <ClCompile Include="FENParser.cpp" />
     <ClCompile Include="Stats.cpp" />
     <ClCompile Include="WorkQueue.cpp" />
   </ItemGroup>

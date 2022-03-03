@@ -42,6 +42,9 @@
     <ClInclude Include="TestPositions.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="FENParser.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HashTable.cpp">
@@ -63,6 +66,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Stats.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="FENParser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
