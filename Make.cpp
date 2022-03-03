@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// Make.cpp
+
 #include "Make.hpp"
 #include "Config.hpp"
 #ifdef COLLECT_STATS

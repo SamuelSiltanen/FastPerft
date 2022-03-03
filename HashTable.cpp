@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// HashTable.cpp
+
 #include "HashTable.hpp"
 
 #include <intrin.h>

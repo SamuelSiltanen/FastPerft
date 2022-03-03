@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// HashTable.hpp
+
 #pragma once
 
 #include "ChessTypes.hpp"

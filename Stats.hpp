@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// Stats.hpp
+
 #pragma once
 
 #include "Config.hpp"

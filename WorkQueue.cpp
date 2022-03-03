@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// WorkQueue.cpp
+
 #include "WorkQueue.hpp"
 #include <cassert>
 

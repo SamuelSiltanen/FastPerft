@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// Main.cpp
+
 #include <cstdio>
 #include <cinttypes>
 #include <chrono>
@@ -131,6 +134,7 @@ void printUsage()
     printf("\t                Default is 26. Negative value disables hash table.\n");
     printf("\t-w <workers>    Number of worker threads. Default is 8.\n");
     printf("\t-s              Print extra stats about moves and hash table.\n");
+    printf("\t-f \"<FEN>\"    Position in FEN notation. Remember to use the quotes.\n");
 }
 
 void testPerft(const Position& pos, int depth)

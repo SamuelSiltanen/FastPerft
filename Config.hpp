@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// Config.hpp
+
 #pragma once
 
 #define MULTITHREADED

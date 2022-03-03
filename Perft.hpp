@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// Perft.hpp
+
 #pragma once
 
 #include "ChessTypes.hpp"

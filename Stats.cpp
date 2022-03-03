@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// Stats.cpp
+
 #include "Stats.hpp"
 
 #ifdef COLLECT_STATS

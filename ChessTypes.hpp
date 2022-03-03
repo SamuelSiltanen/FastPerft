@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// ChessTypes.hpp
+
 #pragma once
 
 #include <cstdint>

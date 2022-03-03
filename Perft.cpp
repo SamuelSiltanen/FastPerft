@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// Perft.cpp
+
 #include "Perft.hpp"
 #include "Config.hpp"
 #include "Make.hpp"

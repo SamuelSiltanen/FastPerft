@@ -1,3 +1,6 @@
+// Copyright 2022 Samuel Siltanen
+// Make.cpp
+
 #pragma once
 
 #include "ChessTypes.hpp"
