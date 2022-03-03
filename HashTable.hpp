@@ -64,7 +64,7 @@ struct alignas(16) HashEntry
 
 constexpr uint64_t InvalidHashTableEntry = 0xffffffffffffffffULL;
 constexpr int MinHashDepth = 2;
-constexpr uint32_t HashTableSize = 26;// 18;
+constexpr uint32_t DefaultHashTableSize = 26;
 
 class HashTable
 {
