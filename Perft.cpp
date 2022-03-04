@@ -47,33 +47,34 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
     RookPins rPins;
 
     uint64_t checkers = findPinsAndCheckers(pos, occ, bPins, rPins);
-    uint64_t pArea = findProtectionArea(pos, occ);
-
-    if (checkers)
-    {
-        stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, bPins, rPins);
-        if (stack == stack0)
-        {
-#ifdef COLLECT_STATS
-            statsCheckmates++;
-#endif
-        }
-    }
-    else
-    {
-        stack = generateP(pos, stack, occ, bPins, rPins);
-        stack = generateN(pos, stack, occ, bPins.pinnedSENW | bPins.pinnedSWNE | rPins.pinnedSN | rPins.pinnedWE);
-        stack = generateB(pos, stack, occ, bPins, rPins);
-        stack = generateR(pos, stack, occ, bPins, rPins);
-        stack = generateQ(pos, stack, occ, bPins, rPins);
-        stack = generateK(pos, stack, occ, pArea);
-        stack = generateCastling(pos, stack, occ, pArea);
-    }
+    uint64_t pArea = findProtectionArea(pos, occ);    
 
 #ifdef LEAF_NODE_BULK_COUNT
     if (depth == 1)
     {
-        uint64_t count = static_cast<uint64_t>(stack - stack0);
+        uint64_t count = 0;
+
+        if (checkers)
+        {
+            count = countCheckEvasions(pos, occ, pArea, checkers, bPins, rPins);
+            if (stack == stack0)
+            {
+#ifdef COLLECT_STATS
+                statsCheckmates++;
+#endif
+            }
+        }
+        else
+        {
+            count += countP(pos, occ, bPins, rPins);
+            count += countN(pos, occ, bPins.pinnedSENW | bPins.pinnedSWNE | rPins.pinnedSN | rPins.pinnedWE);
+            count += countB(pos, occ, bPins, rPins);
+            count += countR(pos, occ, bPins, rPins);
+            count += countQ(pos, occ, bPins, rPins);
+            count += countK(pos, occ, pArea);
+            count += countCastling(pos, occ, pArea);
+        }
+        
 #ifdef HASH_TABLE
         if (1 >= MinHashDepth)
         {
@@ -93,6 +94,27 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
     else
 #endif
     {
+        if (checkers)
+        {
+            stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, bPins, rPins);
+            if (stack == stack0)
+            {
+#ifdef COLLECT_STATS
+                statsCheckmates++;
+#endif
+            }
+        }
+        else
+        {
+            stack = generateP(pos, stack, occ, bPins, rPins);
+            stack = generateN(pos, stack, occ, bPins.pinnedSENW | bPins.pinnedSWNE | rPins.pinnedSN | rPins.pinnedWE);
+            stack = generateB(pos, stack, occ, bPins, rPins);
+            stack = generateR(pos, stack, occ, bPins, rPins);
+            stack = generateQ(pos, stack, occ, bPins, rPins);
+            stack = generateK(pos, stack, occ, pArea);
+            stack = generateCastling(pos, stack, occ, pArea);
+        }
+
         uint64_t count = 0;
 
         for (--stack; stack >= stack0; --stack)
