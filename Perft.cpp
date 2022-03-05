@@ -47,7 +47,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
     RookPins rPins;
 
     uint64_t checkers = findPinsAndCheckers(pos, occ, bPins, rPins);
-    uint64_t pArea = findProtectionArea(pos, occ);    
+    uint64_t pArea = findProtectionArea(pos, occ);
 
 #ifdef LEAF_NODE_BULK_COUNT
     if (depth == 1)

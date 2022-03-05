@@ -11,14 +11,6 @@
 
 //#define DEBUG_DUMP
 
-#ifdef MULTITHREADED
-#define LOCK(x) x.m_lock.lock();
-#define UNLOCK(x) x.m_lock.unlock();
-#else
-#define LOCK(x) 
-#define UNLOCK(x) 
-#endif
-
 #ifdef HASH_DEBUG
 bool HashEntry::posEqual(const Position& pos)
 {
@@ -38,7 +30,11 @@ HashTable::HashTable(uint32_t sizeExp)
     : m_size(1 << sizeExp)
     , m_sizeExp(sizeExp)
 {
+#ifdef MULTITHREADED
+    m_hashTable = (std::atomic<HashEntry>*)_aligned_malloc(m_size * sizeof(std::atomic<HashEntry>), 64);
+#else
     m_hashTable = (HashEntry*)_aligned_malloc(m_size * sizeof(HashEntry), 64);
+#endif
     clear();
     if (!hashesReady)
     {
@@ -74,18 +70,30 @@ HashTable::~HashTable()
     }
 }
 
+// Insert an entry to the hash table. The weakest form of atomicity is sufficient for us,
+// because the "wrong" thread writing the result only affects the performance, but not
+// the validity of the results. The collisions are so rare that it doesn't make sense
+// to optimize for them, but to make the common case as fast as possible.
 bool HashTable::insert(const HashEntry& entry)
 {
     uint32_t index = mapToIndex(entry.hash);
 
-    LOCK(this);
+#ifdef MULTITHREADED
+    HashEntry tableEntry = m_hashTable[index].load(std::memory_order_relaxed);
+#else
+    HashEntry tableEntry = m_hashTable[index];
+#endif
 
-    if (m_hashTable[index].empty() ||
-        (m_hashTable[index].hash == entry.hash && m_hashTable[index].depth() == entry.depth()))
+    if (tableEntry.empty() ||
+        (tableEntry.hash == entry.hash && tableEntry.depth() == entry.depth()))
     {
+#ifdef MULTITHREADED
+        // Allows spurious failures
+        return m_hashTable[index].compare_exchange_weak(tableEntry, entry, std::memory_order_relaxed);
+#else
         m_hashTable[index] = entry;
-        UNLOCK(this);
         return true;
+#endif
     }
     else
     {
@@ -93,50 +101,70 @@ bool HashTable::insert(const HashEntry& entry)
 
         int bestReplacement = -1;
         int64_t bestScore = 0;
+#ifdef MULTITHREADED
+        HashEntry bestEntry;
+#endif
         for (int i = 0; i < 4; ++i)
         {
-            if (m_hashTable[cacheLineStartIndex + i].empty()) // First try empty slots
+#ifdef MULTITHREADED
+            tableEntry = m_hashTable[cacheLineStartIndex + i].load(std::memory_order_relaxed);
+#else
+            tableEntry = m_hashTable[cacheLineStartIndex + i];
+#endif
+
+            if (tableEntry.empty()) // First try empty slots
             {
                 bestReplacement = i;
+#ifdef MULTITHREADED
+                bestEntry = tableEntry;
+#endif
                 break;
             }
             else // Then calculate replacement score
             {
-                int64_t score = replacementPolicy(m_hashTable[cacheLineStartIndex + i], entry);
+                int64_t score = replacementPolicy(tableEntry, entry);
                 if (score > bestScore)
                 {
                     bestReplacement = i;
                     bestScore = score;
+#ifdef MULTITHREADED
+                    bestEntry = tableEntry;
+#endif
                 }
             }
         }
 
         if (bestReplacement >= 0)
         {
+#ifdef MULTITHREADED
+            m_hashTable[cacheLineStartIndex + bestReplacement].compare_exchange_weak(bestEntry, entry, std::memory_order_relaxed);
+#else
             m_hashTable[cacheLineStartIndex + bestReplacement] = entry;
-            UNLOCK(this);
+#endif
             return true;
         }
     }
 
-    UNLOCK(this);
     return false;
 }
 
 uint64_t HashTable::find(const Position& pos, uint16_t depth)
 {
-    uint32_t index = mapToIndex(pos.hash);    
-    
-    LOCK(this);
-
+    uint32_t index = mapToIndex(pos.hash);
     uint32_t cacheLineStartIndex = index & 0xfffffffc;
 
     for (int i = 0; i < 4; ++i)
     {
-        if (m_hashTable[cacheLineStartIndex + i].hash == pos.hash &&
-            m_hashTable[cacheLineStartIndex + i].depth() == depth)
+#ifdef MULTITHREADED
+        HashEntry entry = m_hashTable[cacheLineStartIndex + i].load(std::memory_order_relaxed);
+#else
+        HashEntry entry = m_hashTable[cacheLineStartIndex + i];
+#endif
+
+        if (entry.hash == pos.hash && entry.depth() == depth)
         {
-            UNLOCK(this);
+            uint64_t count = entry.count();
+
 #ifdef HASH_DEBUG
             if (!m_hashTable[cacheLineStartIndex + i].posEqual(pos))
             {
@@ -162,11 +190,9 @@ uint64_t HashTable::find(const Position& pos, uint16_t depth)
                 printf("state: %016llx\n", pos.state);
             }
 #endif
-            return m_hashTable[cacheLineStartIndex + i].count();
+            return count;
         }
     }
-
-    UNLOCK(this);
 
     return InvalidHashTableEntry;
 }

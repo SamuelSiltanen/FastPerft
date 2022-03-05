@@ -4,10 +4,11 @@
 #pragma once
 
 #include "ChessTypes.hpp"
+#include "Config.hpp"
 
 #include <cassert>
 #ifdef MULTITHREADED
-#include <mutex>
+#include <atomic>
 #endif
 
 //#define HASH_DEBUG
@@ -107,13 +108,13 @@ private:
 
     void initHashes();
 
+#ifdef MULTITHREADED
+    std::atomic<HashEntry>* m_hashTable;
+#else
     HashEntry* m_hashTable;
+#endif
     uint32_t m_size;
     uint32_t m_sizeExp;
-
-#ifdef MULTITHREADED
-    std::mutex m_lock;
-#endif
     
     static Hashes hashKeys[64];
     static bool hashesReady;
