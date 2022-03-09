@@ -63,7 +63,11 @@ PerftParams parseCommandLine(int argc, char** argv)
 {
     PerftParams params;
     params.depth = 1;
+#ifdef HASH_TABLE
     params.hashTableSize = DefaultHashTableSize;
+#else
+    params.hashTableSize = 0;
+#endif
     params.numberOfWorkers = 8;
     params.collectStats = false;
     params.position = Position1;

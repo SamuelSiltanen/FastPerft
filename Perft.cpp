@@ -14,6 +14,7 @@
 #ifdef MULTITHREADED
 #include "WorkQueue.hpp"
 #endif
+#include <cassert>
 #include <random>
 
 uint64_t perft(const Position& pos, int depth, Move* stack)

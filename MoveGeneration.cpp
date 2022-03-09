@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <intrin.h>
 
+#define MAGIC_BITBOARDS
+
 #pragma intrinsic(_BitScanForward64)
 #pragma intrinsic(_BitScanReverse64)
 
@@ -23,6 +25,46 @@ struct alignas(64) Rays
     uint64_t E;
 };
 Rays rays[64];
+
+#ifdef MAGIC_BITBOARDS
+#include <random>
+#include <bitset>
+
+const int BBits[64] =
+{
+  6, 5, 5, 5, 5, 5, 5, 6,
+  5, 5, 5, 5, 5, 5, 5, 5,
+  5, 5, 7, 7, 7, 7, 5, 5,
+  5, 5, 7, 9, 9, 7, 5, 5,
+  5, 5, 7, 9, 9, 7, 5, 5,
+  5, 5, 7, 7, 7, 7, 5, 5,
+  5, 5, 5, 5, 5, 5, 5, 5,
+  6, 5, 5, 5, 5, 5, 5, 6
+};
+
+const int RBits[64] =
+{
+  12, 11, 11, 11, 11, 11, 11, 12,
+  11, 10, 10, 10, 10, 10, 10, 11,
+  11, 10, 10, 10, 10, 10, 10, 11,
+  11, 10, 10, 10, 10, 10, 10, 11,
+  11, 10, 10, 10, 10, 10, 10, 11,
+  11, 10, 10, 10, 10, 10, 10, 11,
+  11, 10, 10, 10, 10, 10, 10, 11,
+  12, 11, 11, 11, 11, 11, 11, 12
+};
+
+
+uint64_t BMasks[64];
+uint64_t RMasks[64];
+
+uint64_t BMagic[64];
+uint64_t RMagic[64];
+
+// Full tables, can be compressed if necessary
+uint64_t BAttacks[64][512]; // 512 kb
+uint64_t RAttacks[64][4096]; // 4 MB
+#endif
 
 void fillMoveTables()
 {
@@ -125,6 +167,234 @@ void fillMoveTables()
             }
         }
     }
+
+#ifdef MAGIC_BITBOARDS
+    const uint64_t BordersOff = 0x007e7e7e7e7e7e00ULL;
+    for (int sq = 0; sq < 64; sq++)
+    {
+        BMasks[sq] = rays[sq].SE | rays[sq].SW | rays[sq].NW | rays[sq].NE;
+        BMasks[sq] &= BordersOff;
+        RMasks[sq] = rays[sq].S & 0x00ffffffffffffffULL;
+        RMasks[sq] |= rays[sq].W & 0xfefefefefefefefeULL;
+        RMasks[sq] |= rays[sq].N & 0xffffffffffffff00ULL;
+        RMasks[sq] |= rays[sq].E & 0x7f7f7f7f7f7f7f7fULL;
+    }
+
+    std::mt19937_64 mt(0xacdcabbadeadbeef);
+
+    for (int y = 0; y < 8; y++)
+    {
+        for (int x = 0; x < 8; x++)
+        {
+            int src = y * 8 + x;
+            
+            uint64_t blockers[4096];
+            uint64_t attacks[4096];
+
+            // Construct blockers and attacks for each index
+            int numBits = BBits[src];
+            int numEntries = (1ULL << numBits);
+            uint64_t mask = BMasks[src];
+            for (int maskIndex = 0; maskIndex < numEntries; maskIndex++)
+            {
+                // Construct partial mask from index
+                blockers[maskIndex] = 0;
+                uint64_t workMask = mask;
+                unsigned long pos;
+                for (int bit = 0; bit < numBits; bit++)
+                {
+                    _BitScanForward64(&pos, workMask);
+                    if (maskIndex & (1 << bit))
+                        blockers[maskIndex] |= (1ULL << pos);
+                    workMask ^= (1ULL << pos);
+                }
+
+                uint64_t raySE = 0;
+                for (int k = 1; k < 8 && (raySE & blockers[maskIndex]) == 0; k++)
+                {
+                    int xx = x + k;
+                    int yy = y + k;
+                    if (xx > 7 || yy > 7) break;
+                
+                    int dst = yy * 8 + xx;
+                    raySE |= (1ULL << dst);
+                }
+
+                uint64_t raySW = 0;
+                for (int k = 1; k < 8 && (raySW & blockers[maskIndex]) == 0; k++)
+                {
+                    int xx = x - k;
+                    int yy = y + k;
+                    if (xx < 0 || yy > 7) break;
+
+                    int dst = yy * 8 + xx;
+                    raySW |= (1ULL << dst);
+                }
+
+                uint64_t rayNW = 0;
+                for (int k = 1; k < 8 && (rayNW & blockers[maskIndex]) == 0; k++)
+                {
+                    int xx = x - k;
+                    int yy = y - k;
+                    if (xx < 0 || yy < 0) break;
+
+                    int dst = yy * 8 + xx;
+                    rayNW |= (1ULL << dst);                
+                }
+
+                uint64_t rayNE = 0;
+                for (int k = 1; k < 8 && (rayNE & blockers[maskIndex]) == 0; k++)
+                {
+                    int xx = x + k;
+                    int yy = y - k;
+                    if (xx > 7 || yy < 0) break;
+
+                    int dst = yy * 8 + xx;
+                    rayNE |= (1ULL << dst);
+                }
+
+                attacks[maskIndex] = raySE | raySW | rayNW | rayNE;                
+            }
+
+            // Try to find a hash mapping
+            bool foundMagic = false;
+            std::bitset<4096> used;
+            for (int attempt = 0; attempt < 100000000; attempt++)
+            {
+                uint64_t magic = mt() & mt() & mt();
+                if (__popcnt64((mask * magic) & 0xff00000000000000ULL) < 6) continue;
+
+                used.reset();
+
+                bool fail = false;
+                for (int i = 0; i < numEntries; i++)
+                {
+                    uint64_t index = (blockers[i] * magic) >> (64 - numBits);
+                    if (!used.test(index))
+                    {
+                        BAttacks[src][index] = attacks[i];
+                        used.set(index);
+                    }
+                    else if (used.test(index) && BAttacks[src][index] != attacks[i])
+                    {
+                        fail = true;
+                        break;
+                    }                    
+                }
+
+                if (!fail)
+                {
+                    BMagic[src] = magic;
+                    foundMagic = true;
+                    break;
+                }
+            }
+
+            if (!foundMagic)
+            {
+                printf("Failed to find magic number for square %c%d!\n", 'a' + (char)x, 8 - y);
+            }
+            
+            numBits = RBits[src];
+            numEntries = (1ULL << numBits);
+            mask = RMasks[src];
+            for (int maskIndex = 0; maskIndex < numEntries; maskIndex++)
+            {
+                // Construct partial mask from index
+                blockers[maskIndex] = 0;
+                uint64_t workMask = mask;
+                unsigned long pos;
+                for (int bit = 0; bit < numBits; bit++)
+                {
+                    _BitScanForward64(&pos, workMask);
+                    if (maskIndex & (1 << bit))
+                        blockers[maskIndex] |= (1ULL << pos);
+                    workMask ^= (1ULL << pos);
+                }
+
+                uint64_t rayS = 0;
+                for (int k = 1; k < 8 && (rayS & blockers[maskIndex]) == 0; k++)
+                {
+                    int yy = y + k;
+                    if (yy > 7) break;
+
+                    int dst = yy * 8 + x;
+                    rayS |= (1ULL << dst);
+                }
+
+                uint64_t rayW = 0;
+                for (int k = 1; k < 8 && (rayW & blockers[maskIndex]) == 0; k++)
+                {
+                    int xx = x - k;
+                    if (xx < 0) break;
+
+                    int dst = y * 8 + xx;
+                    rayW |= (1ULL << dst);
+                }
+
+                uint64_t rayN = 0;
+                for (int k = 1; k < 8 && (rayN & blockers[maskIndex]) == 0; k++)
+                {
+                    int yy = y - k;
+                    if (yy < 0) break;
+
+                    int dst = yy * 8 + x;
+                    rayN |= (1ULL << dst);
+                }
+
+                uint64_t rayE = 0;
+                for (int k = 1; k < 8 && (rayE & blockers[maskIndex]) == 0; k++)
+                {
+                    int xx = x + k;
+                    if (xx > 7) break;
+
+                    int dst = y * 8 + xx;
+                    rayE |= (1ULL << dst);
+                }
+
+                attacks[maskIndex] = rayS | rayW | rayN | rayE;
+            }
+            
+            // Try to find a hash mapping
+            foundMagic = false;
+            for (int attempt = 0; attempt < 100000000; attempt++)
+            {
+                uint64_t magic = mt() & mt() & mt();
+                if (__popcnt64((mask * magic) & 0xff00000000000000ULL) < 6) continue;
+
+                used.reset();
+
+                bool fail = false;
+                for (int i = 0; i < numEntries; i++)
+                {
+                    uint64_t index = (blockers[i] * magic) >> (64 - numBits);
+                    if (!used.test(index))
+                    {
+                        RAttacks[src][index] = attacks[i];
+                        used.set(index);
+                    }
+                    else if (used.test(index) && RAttacks[src][index] != attacks[i])
+                    {
+                        fail = true;
+                        break;
+                    }                    
+                }
+
+                if (!fail)
+                {
+                    RMagic[src] = magic;
+                    foundMagic = true;
+                    break;
+                }
+            }
+            
+            if (!foundMagic)
+            {
+                printf("Failed to find magic number for square %c%d!\n", 'a' + (char)x, 8 - y);
+            }
+        }
+    }
+#endif
 }
 
 Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins& bPins, const RookPins& rPins)
@@ -1552,7 +1822,15 @@ uint64_t senwMoves(unsigned long src, uint64_t occ)
 
 uint64_t bmoves(unsigned long src, uint64_t occ)
 {
+#ifdef MAGIC_BITBOARDS
+    uint64_t index = occ & BMasks[src];
+    index *= BMagic[src];
+    index >>= (64 - BBits[src]);
+    uint64_t moves = BAttacks[src][index];
+    return moves;
+#else
     return swneMoves(src, occ) | senwMoves(src, occ);
+#endif
 }
 
 uint64_t weMoves(unsigned long src, uint64_t occ)
@@ -1589,7 +1867,15 @@ uint64_t snMoves(unsigned long src, uint64_t occ)
 
 uint64_t rmoves(unsigned long src, uint64_t occ)
 {
+#ifdef MAGIC_BITBOARDS
+    uint64_t index = occ & RMasks[src];
+    index *= RMagic[src];
+    index >>= (64 - RBits[src]);
+    uint64_t moves = RAttacks[src][index];
+    return moves;
+#else
     return weMoves(src, occ) | snMoves(src, occ);
+#endif
 }
 
 uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, BishopPins& bPins, RookPins& rPins)
