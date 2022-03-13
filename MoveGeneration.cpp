@@ -7,6 +7,7 @@
 #include <intrin.h>
 
 #define MAGIC_BITBOARDS
+#define KINDERGARTEN_BITBOARDS
 
 #pragma intrinsic(_BitScanForward64)
 #pragma intrinsic(_BitScanReverse64)
@@ -64,6 +65,14 @@ uint64_t RMagic[64];
 // Full tables, can be compressed if necessary
 uint64_t BAttacks[64][512]; // 512 kb
 uint64_t RAttacks[64][4096]; // 4 MB
+#endif
+
+#ifdef KINDERGARTEN_BITBOARDS
+uint64_t swneExMask[64];
+uint64_t senwExMask[64];
+uint64_t weExMask[64];
+uint64_t AFileAttacks[8][64]; // 4 kB
+uint64_t KinderGartenAttacks[8][64]; // 4 kB
 #endif
 
 void fillMoveTables()
@@ -391,6 +400,70 @@ void fillMoveTables()
             if (!foundMagic)
             {
                 printf("Failed to find magic number for square %c%d!\n", 'a' + (char)x, 8 - y);
+            }
+        }
+    }
+#endif
+
+#ifdef KINDERGARTEN_BITBOARDS
+    for (int x = 0; x < 8; x++)
+    {
+        for (uint64_t mask = 0; mask < 64; mask++)
+        {
+            uint64_t rankAttack = 0;
+            for (int xx = x - 1; xx >= 0; xx--)
+            {
+                rankAttack |= (1ULL << xx);
+                if ((mask << 1) & (1ULL << xx)) break;
+            }
+            for (int xx = x + 1; xx < 8; xx++)
+            {
+                rankAttack |= (1ULL << xx);
+                if ((mask << 1) & (1ULL << xx)) break;
+            }
+
+            rankAttack |= (rankAttack << 8);
+            rankAttack |= (rankAttack << 16);
+            rankAttack |= (rankAttack << 32);
+
+            KinderGartenAttacks[x][mask] = rankAttack;
+
+            uint64_t fileAttack = 0;
+            for (int yy = x - 1; yy >= 0; yy--)
+            {
+                fileAttack |= (1ULL << (yy * 8));
+                if ((mask << 1) & (0x80 >> yy)) break;
+
+            }
+            for (int yy = x + 1; yy < 8; yy++)
+            {
+                fileAttack |= (1ULL << (yy * 8));
+                if ((mask << 1) & (0x80 >> yy)) break;
+
+            }
+            AFileAttacks[x][mask] = fileAttack;
+        }
+    }
+
+    for (int y = 0; y < 8; y++)
+    {
+        uint64_t wemask = (0x00000000000000ffULL << (y * 8));
+        for (int x = 0; x < 8; x++)
+        {
+            weExMask[y * 8 + x] = wemask;
+
+            swneExMask[y * 8 + x] = (1ULL << (y * 8 + x));
+            senwExMask[y * 8 + x] = (1ULL << (y * 8 + x));
+            for (int k = 0; k < 8; k++)
+            {
+                if (y + k < 8 && x - k >= 0)
+                    swneExMask[y * 8 + x] |= (1ULL << ((y + k) * 8 + (x - k)));
+                if (y - k >= 0 && x + k < 8)
+                    swneExMask[y * 8 + x] |= (1ULL << ((y - k) * 8 + (x + k)));
+                if (y + k < 8 && x + k < 8)
+                    senwExMask[y * 8 + x] |= (1ULL << ((y + k) * 8 + (x + k)));
+                if (y - k >= 0 && x - k >= 0)
+                    senwExMask[y * 8 + x] |= (1ULL << ((y - k) * 8 + (x - k)));
             }
         }
     }
@@ -1790,6 +1863,11 @@ uint64_t countCheckEvasions(const Position& pos, uint64_t occ, uint64_t pArea, u
 
 uint64_t swneMoves(unsigned long src, uint64_t occ)
 {
+#ifdef KINDERGARTEN_BITBOARDS
+    const uint64_t bFile = 0x0202020202020202ULL;
+    uint64_t index = (swneExMask[src] & occ) * bFile >> 58;
+    return swneExMask[src] & KinderGartenAttacks[src & 7][index];
+#else
     unsigned long hit;
     uint64_t bRays = 0;
 
@@ -1802,10 +1880,16 @@ uint64_t swneMoves(unsigned long src, uint64_t occ)
     bRays ^= rays[hit].NE;
 
     return bRays;
+#endif
 }
 
 uint64_t senwMoves(unsigned long src, uint64_t occ)
 {
+#ifdef KINDERGARTEN_BITBOARDS
+    const uint64_t bFile = 0x0202020202020202ULL;
+    uint64_t index = (senwExMask[src] & occ) * bFile >> 58;
+    return senwExMask[src] & KinderGartenAttacks[src & 7][index];
+#else
     unsigned long hit;
     uint64_t bRays = 0;
 
@@ -1818,6 +1902,7 @@ uint64_t senwMoves(unsigned long src, uint64_t occ)
     bRays ^= rays[hit].NW;
 
     return bRays;
+#endif
 }
 
 uint64_t bmoves(unsigned long src, uint64_t occ)
@@ -1835,6 +1920,11 @@ uint64_t bmoves(unsigned long src, uint64_t occ)
 
 uint64_t weMoves(unsigned long src, uint64_t occ)
 {
+#ifdef KINDERGARTEN_BITBOARDS
+    const uint64_t bFile = 0x0202020202020202ULL;
+    uint64_t index = (weExMask[src] & occ) * bFile >> 58;
+    return weExMask[src] & KinderGartenAttacks[src & 7][index];
+#else
     unsigned long hit;
     uint64_t rRays = 0;
 
@@ -1847,10 +1937,18 @@ uint64_t weMoves(unsigned long src, uint64_t occ)
     rRays ^= rays[hit].W;
 
     return rRays;
+#endif
 }
 
 uint64_t snMoves(unsigned long src, uint64_t occ)
 {
+#ifdef KINDERGARTEN_BITBOARDS
+    const uint64_t AFile = 0x0101010101010101ULL;
+    const uint64_t c7h2 = 0x0080402010080400ULL;
+    uint64_t index = AFile & (occ >> (src & 7));
+    index = (c7h2 * index) >> 58;
+    return AFileAttacks[src >> 3][index] << (src & 7);
+#else
     unsigned long hit;
     uint64_t rRays = 0;
 
@@ -1863,6 +1961,7 @@ uint64_t snMoves(unsigned long src, uint64_t occ)
     rRays ^= rays[hit].N;
 
     return rRays;
+#endif
 }
 
 uint64_t rmoves(unsigned long src, uint64_t occ)
