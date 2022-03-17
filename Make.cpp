@@ -292,10 +292,13 @@ Position make(const Position& pos, const Move& move)
     }
 
     // It actually doesn't matter if there is a rook or not, or even whose move it is
-    if (move.dst() == 0) next.state &= ~CastlingBlackLong;
-    if (move.dst() == 7) next.state &= ~CastlingBlackShort;
-    if (move.dst() == 56) next.state &= ~CastlingWhiteLong;
-    if (move.dst() == 63) next.state &= ~CastlingWhiteShort;
+    if (dst & 0x8100000000000081ULL)
+    {
+        if (move.dst() == 0) next.state &= ~CastlingBlackLong;
+        if (move.dst() == 7) next.state &= ~CastlingBlackShort;
+        if (move.dst() == 56) next.state &= ~CastlingWhiteLong;
+        if (move.dst() == 63) next.state &= ~CastlingWhiteShort;
+    }
 
 #ifdef HASH_TABLE
     next.hash ^= HashTable::hashEP(pos.state, next.state);

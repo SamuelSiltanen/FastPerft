@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <intrin.h>
+#include <thread>
 
 #define MAGIC_BITBOARDS
 #define KINDERGARTEN_BITBOARDS
@@ -73,6 +74,220 @@ uint64_t senwExMask[64];
 uint64_t weExMask[64];
 uint64_t AFileAttacks[8][64]; // 4 kB
 uint64_t KinderGartenAttacks[8][64]; // 4 kB
+#endif
+
+#ifdef MAGIC_BITBOARDS
+void calculateMagicNumber(int x, int y)
+{
+    int src = y * 8 + x;
+
+    uint64_t blockers[4096];
+    uint64_t attacks[4096];
+
+    std::mt19937_64 mt(0xacdcabbadeadbeef);
+
+    // Construct blockers and attacks for each index
+    int numBits = BBits[src];
+    int numEntries = (1ULL << numBits);
+    uint64_t mask = BMasks[src];
+    for (int maskIndex = 0; maskIndex < numEntries; maskIndex++)
+    {
+        // Construct partial mask from index
+        blockers[maskIndex] = 0;
+        uint64_t workMask = mask;
+        unsigned long pos;
+        for (int bit = 0; bit < numBits; bit++)
+        {
+            _BitScanForward64(&pos, workMask);
+            if (maskIndex & (1 << bit))
+                blockers[maskIndex] |= (1ULL << pos);
+            workMask ^= (1ULL << pos);
+        }
+
+        uint64_t raySE = 0;
+        for (int k = 1; k < 8 && (raySE & blockers[maskIndex]) == 0; k++)
+        {
+            int xx = x + k;
+            int yy = y + k;
+            if (xx > 7 || yy > 7) break;
+
+            int dst = yy * 8 + xx;
+            raySE |= (1ULL << dst);
+        }
+
+        uint64_t raySW = 0;
+        for (int k = 1; k < 8 && (raySW & blockers[maskIndex]) == 0; k++)
+        {
+            int xx = x - k;
+            int yy = y + k;
+            if (xx < 0 || yy > 7) break;
+
+            int dst = yy * 8 + xx;
+            raySW |= (1ULL << dst);
+        }
+
+        uint64_t rayNW = 0;
+        for (int k = 1; k < 8 && (rayNW & blockers[maskIndex]) == 0; k++)
+        {
+            int xx = x - k;
+            int yy = y - k;
+            if (xx < 0 || yy < 0) break;
+
+            int dst = yy * 8 + xx;
+            rayNW |= (1ULL << dst);
+        }
+
+        uint64_t rayNE = 0;
+        for (int k = 1; k < 8 && (rayNE & blockers[maskIndex]) == 0; k++)
+        {
+            int xx = x + k;
+            int yy = y - k;
+            if (xx > 7 || yy < 0) break;
+
+            int dst = yy * 8 + xx;
+            rayNE |= (1ULL << dst);
+        }
+
+        attacks[maskIndex] = raySE | raySW | rayNW | rayNE;
+    }
+
+    // Try to find a hash mapping
+    bool foundMagic = false;
+    std::bitset<4096> used;
+    for (int attempt = 0; attempt < 100000000; attempt++)
+    {
+        uint64_t magic = mt() & mt() & mt();
+        if (__popcnt64((mask * magic) & 0xff00000000000000ULL) < 6) continue;
+
+        used.reset();
+
+        bool fail = false;
+        for (int i = 0; i < numEntries; i++)
+        {
+            uint64_t index = (blockers[i] * magic) >> (64 - numBits);
+            if (!used.test(index))
+            {
+                BAttacks[src][index] = attacks[i];
+                used.set(index);
+            }
+            else if (used.test(index) && BAttacks[src][index] != attacks[i])
+            {
+                fail = true;
+                break;
+            }
+        }
+
+        if (!fail)
+        {
+            BMagic[src] = magic;
+            foundMagic = true;
+            break;
+        }
+    }
+
+    if (!foundMagic)
+    {
+        printf("Failed to find magic number for square %c%d!\n", 'a' + (char)x, 8 - y);
+    }
+
+    numBits = RBits[src];
+    numEntries = (1ULL << numBits);
+    mask = RMasks[src];
+    for (int maskIndex = 0; maskIndex < numEntries; maskIndex++)
+    {
+        // Construct partial mask from index
+        blockers[maskIndex] = 0;
+        uint64_t workMask = mask;
+        unsigned long pos;
+        for (int bit = 0; bit < numBits; bit++)
+        {
+            _BitScanForward64(&pos, workMask);
+            if (maskIndex & (1 << bit))
+                blockers[maskIndex] |= (1ULL << pos);
+            workMask ^= (1ULL << pos);
+        }
+
+        uint64_t rayS = 0;
+        for (int k = 1; k < 8 && (rayS & blockers[maskIndex]) == 0; k++)
+        {
+            int yy = y + k;
+            if (yy > 7) break;
+
+            int dst = yy * 8 + x;
+            rayS |= (1ULL << dst);
+        }
+
+        uint64_t rayW = 0;
+        for (int k = 1; k < 8 && (rayW & blockers[maskIndex]) == 0; k++)
+        {
+            int xx = x - k;
+            if (xx < 0) break;
+
+            int dst = y * 8 + xx;
+            rayW |= (1ULL << dst);
+        }
+
+        uint64_t rayN = 0;
+        for (int k = 1; k < 8 && (rayN & blockers[maskIndex]) == 0; k++)
+        {
+            int yy = y - k;
+            if (yy < 0) break;
+
+            int dst = yy * 8 + x;
+            rayN |= (1ULL << dst);
+        }
+
+        uint64_t rayE = 0;
+        for (int k = 1; k < 8 && (rayE & blockers[maskIndex]) == 0; k++)
+        {
+            int xx = x + k;
+            if (xx > 7) break;
+
+            int dst = y * 8 + xx;
+            rayE |= (1ULL << dst);
+        }
+
+        attacks[maskIndex] = rayS | rayW | rayN | rayE;
+    }
+
+    // Try to find a hash mapping
+    foundMagic = false;
+    for (int attempt = 0; attempt < 100000000; attempt++)
+    {
+        uint64_t magic = mt() & mt() & mt();
+        if (__popcnt64((mask * magic) & 0xff00000000000000ULL) < 6) continue;
+
+        used.reset();
+
+        bool fail = false;
+        for (int i = 0; i < numEntries; i++)
+        {
+            uint64_t index = (blockers[i] * magic) >> (64 - numBits);
+            if (!used.test(index))
+            {
+                RAttacks[src][index] = attacks[i];
+                used.set(index);
+            }
+            else if (used.test(index) && RAttacks[src][index] != attacks[i])
+            {
+                fail = true;
+                break;
+            }
+        }
+
+        if (!fail)
+        {
+            RMagic[src] = magic;
+            foundMagic = true;
+            break;
+        }
+    }
+
+    if (!foundMagic)
+    {
+        printf("Failed to find magic number for square %c%d!\n", 'a' + (char)x, 8 - y);
+    }
+}
 #endif
 
 void fillMoveTables()
@@ -189,219 +404,20 @@ void fillMoveTables()
         RMasks[sq] |= rays[sq].E & 0x7f7f7f7f7f7f7f7fULL;
     }
 
-    std::mt19937_64 mt(0xacdcabbadeadbeef);
+    std::thread* magicThreads[64];
 
     for (int y = 0; y < 8; y++)
     {
         for (int x = 0; x < 8; x++)
         {
-            int src = y * 8 + x;
-            
-            uint64_t blockers[4096];
-            uint64_t attacks[4096];
-
-            // Construct blockers and attacks for each index
-            int numBits = BBits[src];
-            int numEntries = (1ULL << numBits);
-            uint64_t mask = BMasks[src];
-            for (int maskIndex = 0; maskIndex < numEntries; maskIndex++)
-            {
-                // Construct partial mask from index
-                blockers[maskIndex] = 0;
-                uint64_t workMask = mask;
-                unsigned long pos;
-                for (int bit = 0; bit < numBits; bit++)
-                {
-                    _BitScanForward64(&pos, workMask);
-                    if (maskIndex & (1 << bit))
-                        blockers[maskIndex] |= (1ULL << pos);
-                    workMask ^= (1ULL << pos);
-                }
-
-                uint64_t raySE = 0;
-                for (int k = 1; k < 8 && (raySE & blockers[maskIndex]) == 0; k++)
-                {
-                    int xx = x + k;
-                    int yy = y + k;
-                    if (xx > 7 || yy > 7) break;
-                
-                    int dst = yy * 8 + xx;
-                    raySE |= (1ULL << dst);
-                }
-
-                uint64_t raySW = 0;
-                for (int k = 1; k < 8 && (raySW & blockers[maskIndex]) == 0; k++)
-                {
-                    int xx = x - k;
-                    int yy = y + k;
-                    if (xx < 0 || yy > 7) break;
-
-                    int dst = yy * 8 + xx;
-                    raySW |= (1ULL << dst);
-                }
-
-                uint64_t rayNW = 0;
-                for (int k = 1; k < 8 && (rayNW & blockers[maskIndex]) == 0; k++)
-                {
-                    int xx = x - k;
-                    int yy = y - k;
-                    if (xx < 0 || yy < 0) break;
-
-                    int dst = yy * 8 + xx;
-                    rayNW |= (1ULL << dst);                
-                }
-
-                uint64_t rayNE = 0;
-                for (int k = 1; k < 8 && (rayNE & blockers[maskIndex]) == 0; k++)
-                {
-                    int xx = x + k;
-                    int yy = y - k;
-                    if (xx > 7 || yy < 0) break;
-
-                    int dst = yy * 8 + xx;
-                    rayNE |= (1ULL << dst);
-                }
-
-                attacks[maskIndex] = raySE | raySW | rayNW | rayNE;                
-            }
-
-            // Try to find a hash mapping
-            bool foundMagic = false;
-            std::bitset<4096> used;
-            for (int attempt = 0; attempt < 100000000; attempt++)
-            {
-                uint64_t magic = mt() & mt() & mt();
-                if (__popcnt64((mask * magic) & 0xff00000000000000ULL) < 6) continue;
-
-                used.reset();
-
-                bool fail = false;
-                for (int i = 0; i < numEntries; i++)
-                {
-                    uint64_t index = (blockers[i] * magic) >> (64 - numBits);
-                    if (!used.test(index))
-                    {
-                        BAttacks[src][index] = attacks[i];
-                        used.set(index);
-                    }
-                    else if (used.test(index) && BAttacks[src][index] != attacks[i])
-                    {
-                        fail = true;
-                        break;
-                    }                    
-                }
-
-                if (!fail)
-                {
-                    BMagic[src] = magic;
-                    foundMagic = true;
-                    break;
-                }
-            }
-
-            if (!foundMagic)
-            {
-                printf("Failed to find magic number for square %c%d!\n", 'a' + (char)x, 8 - y);
-            }
-            
-            numBits = RBits[src];
-            numEntries = (1ULL << numBits);
-            mask = RMasks[src];
-            for (int maskIndex = 0; maskIndex < numEntries; maskIndex++)
-            {
-                // Construct partial mask from index
-                blockers[maskIndex] = 0;
-                uint64_t workMask = mask;
-                unsigned long pos;
-                for (int bit = 0; bit < numBits; bit++)
-                {
-                    _BitScanForward64(&pos, workMask);
-                    if (maskIndex & (1 << bit))
-                        blockers[maskIndex] |= (1ULL << pos);
-                    workMask ^= (1ULL << pos);
-                }
-
-                uint64_t rayS = 0;
-                for (int k = 1; k < 8 && (rayS & blockers[maskIndex]) == 0; k++)
-                {
-                    int yy = y + k;
-                    if (yy > 7) break;
-
-                    int dst = yy * 8 + x;
-                    rayS |= (1ULL << dst);
-                }
-
-                uint64_t rayW = 0;
-                for (int k = 1; k < 8 && (rayW & blockers[maskIndex]) == 0; k++)
-                {
-                    int xx = x - k;
-                    if (xx < 0) break;
-
-                    int dst = y * 8 + xx;
-                    rayW |= (1ULL << dst);
-                }
-
-                uint64_t rayN = 0;
-                for (int k = 1; k < 8 && (rayN & blockers[maskIndex]) == 0; k++)
-                {
-                    int yy = y - k;
-                    if (yy < 0) break;
-
-                    int dst = yy * 8 + x;
-                    rayN |= (1ULL << dst);
-                }
-
-                uint64_t rayE = 0;
-                for (int k = 1; k < 8 && (rayE & blockers[maskIndex]) == 0; k++)
-                {
-                    int xx = x + k;
-                    if (xx > 7) break;
-
-                    int dst = y * 8 + xx;
-                    rayE |= (1ULL << dst);
-                }
-
-                attacks[maskIndex] = rayS | rayW | rayN | rayE;
-            }
-            
-            // Try to find a hash mapping
-            foundMagic = false;
-            for (int attempt = 0; attempt < 100000000; attempt++)
-            {
-                uint64_t magic = mt() & mt() & mt();
-                if (__popcnt64((mask * magic) & 0xff00000000000000ULL) < 6) continue;
-
-                used.reset();
-
-                bool fail = false;
-                for (int i = 0; i < numEntries; i++)
-                {
-                    uint64_t index = (blockers[i] * magic) >> (64 - numBits);
-                    if (!used.test(index))
-                    {
-                        RAttacks[src][index] = attacks[i];
-                        used.set(index);
-                    }
-                    else if (used.test(index) && RAttacks[src][index] != attacks[i])
-                    {
-                        fail = true;
-                        break;
-                    }                    
-                }
-
-                if (!fail)
-                {
-                    RMagic[src] = magic;
-                    foundMagic = true;
-                    break;
-                }
-            }
-            
-            if (!foundMagic)
-            {
-                printf("Failed to find magic number for square %c%d!\n", 'a' + (char)x, 8 - y);
-            }
+            magicThreads[y * 8 + x] = new std::thread(calculateMagicNumber, x, y);
         }
+    }
+
+    for (int t = 0; t < 64; t++)
+    {
+        magicThreads[t]->join();
+        delete magicThreads[t];
     }
 #endif
 
@@ -486,6 +502,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         pcs = pos.p & our & 0x00ff000000000000 & (~occ << 8) & (~occ << 16) & (~anyPins | rPins.pinnedSN);
@@ -495,6 +512,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         uint64_t their = occ & ~pos.w;
@@ -505,6 +523,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         pcs = pos.p & our & 0x007f7f7f7f7f0000 & (their << 7) & (~anyPins | bPins.pinnedSWNE);
@@ -514,6 +533,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         // Promotions (also capturing)
@@ -530,6 +550,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst, Queen);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
         
         pcs = pos.p & our & 0x000000000000fe00 & (their << 9) & (~anyPins | bPins.pinnedSENW);
@@ -545,6 +566,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst, Queen);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         pcs = pos.p & our & 0x0000000000007f00 & (their << 7) & (~anyPins | bPins.pinnedSWNE);
@@ -560,6 +582,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst, Queen);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
     }
     else
@@ -572,6 +595,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         pcs = pos.p & our & 0x000000000000ff00 & (~occ >> 8) & (~occ >> 16) & (~anyPins | rPins.pinnedSN);
@@ -581,6 +605,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         uint64_t their = pos.w;
@@ -591,6 +616,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         pcs = pos.p & our & 0x00007f7f7f7f7f00 & (their >> 9) & (~anyPins | bPins.pinnedSENW);
@@ -600,6 +626,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         // Promotions (also capturing)
@@ -616,6 +643,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst, Queen);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         pcs = pos.p & our & 0x00fe000000000000 & (their >> 7) & (~anyPins | bPins.pinnedSWNE);
@@ -631,6 +659,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst, Queen);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
 
         pcs = pos.p & our & 0x007f000000000000 & (their >> 9) & (~anyPins | bPins.pinnedSENW);
@@ -646,6 +675,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const BishopPins
             *stack = Move(Pawn, src, dst, Queen);
             ++stack;
             pcs ^= (1ULL << src);
+            //pcs &= (pcs - 1);
         }
     }
 
@@ -793,10 +823,10 @@ Move* generateN(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins
         while (_BitScanForward64(&dst, sqrs))
         {
             *stack = Move(Knight, src, dst);
-            ++stack; // NOTE: Updating the stack pointer the half the time here!?
-            sqrs ^= (1ULL << dst);
+            ++stack;
+            sqrs &= (sqrs - 1);
         }
-        pcs ^= (1ULL << src);
+        pcs &= (pcs - 1);
     }
 
     return stack;
@@ -818,7 +848,7 @@ Move* generateB(const Position& pos, Move* stack, uint64_t occ, const BishopPins
         {
             *stack = Move(Bishop, src, dst);
             ++stack;
-            sqrs ^= (1ULL << dst);
+            sqrs &= (sqrs - 1);
         }
         pcs ^= (1ULL << src);
     }
@@ -842,7 +872,7 @@ Move* generateR(const Position& pos, Move* stack, uint64_t occ, const BishopPins
         {
             *stack = Move(Rook, src, dst);
             ++stack;
-            sqrs ^= (1ULL << dst);
+            sqrs &= (sqrs - 1);
         }
         pcs ^= (1ULL << src);
     }
@@ -871,7 +901,7 @@ Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const BishopPins
         {
             *stack = Move(Queen, src, dst);
             ++stack;
-            sqrs ^= (1ULL << dst);
+            sqrs &= (sqrs - 1);
         }
         pcs ^= (1ULL << src);
     }
@@ -891,7 +921,7 @@ Move* generateK(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea)
     {
         *stack = Move(King, src, dst);
         ++stack;
-        sqrs ^= (1ULL << dst);
+        sqrs &= (sqrs - 1);
     }
 
     return stack;
@@ -1471,7 +1501,7 @@ uint64_t countN(const Position& pos, uint64_t occ, uint64_t anyPins)
 {
     uint64_t count = 0;
 
-    unsigned long src, dst;
+    unsigned long src;
 
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.n & our & ~anyPins;
@@ -1479,7 +1509,7 @@ uint64_t countN(const Position& pos, uint64_t occ, uint64_t anyPins)
     {
         uint64_t sqrs = nmoves[src] & ~our;
         count += __popcnt64(sqrs);
-        pcs ^= (1ULL << src);
+        pcs &= (pcs - 1);
     }
 
     return count;
@@ -1489,15 +1519,22 @@ uint64_t countB(const Position& pos, uint64_t occ, const BishopPins& bPins, cons
 {
     uint64_t count = 0;
 
-    unsigned long src, dst;
+    unsigned long src;
 
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.bq & ~pos.rq & our & ~(rPins.pinnedSN | rPins.pinnedWE);
     while (_BitScanForward64(&src, pcs))
     {
         uint64_t sqrs = 0;
-        if (!(bPins.pinnedSENW & (1ULL << src))) sqrs |= swneMoves(src, occ);
-        if (!(bPins.pinnedSWNE & (1ULL << src))) sqrs |= senwMoves(src, occ);
+        if (!((bPins.pinnedSENW | bPins.pinnedSWNE) & (1ULL << src)))
+        {
+            sqrs = bmoves(src, occ);
+        }
+        else
+        {
+            if (!(bPins.pinnedSENW & (1ULL << src))) sqrs |= swneMoves(src, occ);
+            if (!(bPins.pinnedSWNE & (1ULL << src))) sqrs |= senwMoves(src, occ);
+        }
         sqrs &= ~our;
         count += __popcnt64(sqrs);
         pcs ^= (1ULL << src);
@@ -1510,15 +1547,22 @@ uint64_t countR(const Position& pos, uint64_t occ, const BishopPins& bPins, cons
 {
     uint64_t count = 0;
 
-    unsigned long src, dst;
+    unsigned long src;
 
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.rq & ~pos.bq & our & ~(bPins.pinnedSENW | bPins.pinnedSWNE);
     while (_BitScanForward64(&src, pcs))
     {
         uint64_t sqrs = 0;
-        if (!(rPins.pinnedWE & (1ULL << src))) sqrs |= snMoves(src, occ);
-        if (!(rPins.pinnedSN & (1ULL << src))) sqrs |= weMoves(src, occ);
+        if (!((rPins.pinnedSN | rPins.pinnedWE) & (1ULL << src)))
+        {
+            sqrs = rmoves(src, occ);
+        }
+        else
+        {
+            if (!(rPins.pinnedWE & (1ULL << src))) sqrs |= snMoves(src, occ);
+            if (!(rPins.pinnedSN & (1ULL << src))) sqrs |= weMoves(src, occ);
+        }
         sqrs &= ~our;
         count += __popcnt64(sqrs);
         pcs ^= (1ULL << src);
@@ -1531,7 +1575,7 @@ uint64_t countQ(const Position& pos, uint64_t occ, const BishopPins& bPins, cons
 {
     uint64_t count = 0;
 
-    unsigned long src, dst;
+    unsigned long src;
 
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.bq & pos.rq & our;
@@ -1540,10 +1584,18 @@ uint64_t countQ(const Position& pos, uint64_t occ, const BishopPins& bPins, cons
     {
         uint64_t sqrs = 0;
 
-        if (!(anyPins & ~rPins.pinnedWE & (1ULL << src))) sqrs |= weMoves(src, occ);
-        if (!(anyPins & ~rPins.pinnedSN & (1ULL << src))) sqrs |= snMoves(src, occ);
-        if (!(anyPins & ~bPins.pinnedSWNE & (1ULL << src))) sqrs |= swneMoves(src, occ);
-        if (!(anyPins & ~bPins.pinnedSENW & (1ULL << src))) sqrs |= senwMoves(src, occ);
+        if (!(anyPins & (1ULL << src)))
+        {
+            sqrs |= bmoves(src, occ);
+            sqrs |= rmoves(src, occ);
+        }
+        else
+        {
+            if (!(anyPins & ~rPins.pinnedWE & (1ULL << src))) sqrs |= weMoves(src, occ);
+            if (!(anyPins & ~rPins.pinnedSN & (1ULL << src))) sqrs |= snMoves(src, occ);
+            if (!(anyPins & ~bPins.pinnedSWNE & (1ULL << src))) sqrs |= swneMoves(src, occ);
+            if (!(anyPins & ~bPins.pinnedSENW & (1ULL << src))) sqrs |= senwMoves(src, occ);
+        }
 
         sqrs &= ~our;
         count += __popcnt64(sqrs);
@@ -1557,7 +1609,7 @@ uint64_t countK(const Position& pos, uint64_t occ, const uint64_t pArea)
 {
     uint64_t count = 0;
 
-    unsigned long src, dst;
+    unsigned long src;
 
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.k & our;
@@ -2118,8 +2170,8 @@ uint64_t findProtectionArea(const Position& pos, uint64_t occ)
     while (_BitScanForward64(&src, pcs))
     {
         pArea |= nmoves[src];
-        pcs ^= (1ULL << src);
-    }
+        pcs &= (pcs - 1);
+    }    
 
     occ ^= (pos.k & ~their); // King doesn't block the sliding pieces' protection area
 
@@ -2127,14 +2179,14 @@ uint64_t findProtectionArea(const Position& pos, uint64_t occ)
     while (_BitScanForward64(&src, pcs))
     {
         pArea |= bmoves(src, occ);
-        pcs ^= (1ULL << src);
+        pcs &= (pcs - 1);
     }
 
     pcs = pos.rq & their;
     while (_BitScanForward64(&src, pcs))
     {
         pArea |= rmoves(src, occ);
-        pcs ^= (1ULL << src);
+        pcs &= (pcs - 1);
     }
 
     pcs = pos.k & their;
