@@ -30,7 +30,7 @@ HashTable::HashTable(uint32_t sizeExp)
     : m_size(1 << sizeExp)
     , m_sizeExp(sizeExp)
 {
-#ifdef MULTITHREADED
+#if MULTITHREADED
     m_hashTable = (std::atomic<HashEntry>*)_aligned_malloc(m_size * sizeof(std::atomic<HashEntry>), 64);
 #else
     m_hashTable = (HashEntry*)_aligned_malloc(m_size * sizeof(HashEntry), 64);
@@ -78,7 +78,7 @@ bool HashTable::insert(const HashEntry& entry)
 {
     uint32_t index = mapToIndex(entry.hash);
 
-#ifdef MULTITHREADED
+#if MULTITHREADED
     HashEntry tableEntry = m_hashTable[index].load(std::memory_order_relaxed);
 #else
     HashEntry tableEntry = m_hashTable[index];
@@ -87,7 +87,7 @@ bool HashTable::insert(const HashEntry& entry)
     if (tableEntry.empty() ||
         (tableEntry.hash == entry.hash && tableEntry.depth() == entry.depth()))
     {
-#ifdef MULTITHREADED
+#if MULTITHREADED
         // Allows spurious failures
         return m_hashTable[index].compare_exchange_weak(tableEntry, entry, std::memory_order_relaxed);
 #else
@@ -101,12 +101,12 @@ bool HashTable::insert(const HashEntry& entry)
 
         int bestReplacement = -1;
         int64_t bestScore = 0;
-#ifdef MULTITHREADED
+#if MULTITHREADED
         HashEntry bestEntry;
 #endif
         for (int i = 0; i < 4; ++i)
         {
-#ifdef MULTITHREADED
+#if MULTITHREADED
             tableEntry = m_hashTable[cacheLineStartIndex + i].load(std::memory_order_relaxed);
 #else
             tableEntry = m_hashTable[cacheLineStartIndex + i];
@@ -115,7 +115,7 @@ bool HashTable::insert(const HashEntry& entry)
             if (tableEntry.empty()) // First try empty slots
             {
                 bestReplacement = i;
-#ifdef MULTITHREADED
+#if MULTITHREADED
                 bestEntry = tableEntry;
 #endif
                 break;
@@ -127,7 +127,7 @@ bool HashTable::insert(const HashEntry& entry)
                 {
                     bestReplacement = i;
                     bestScore = score;
-#ifdef MULTITHREADED
+#if MULTITHREADED
                     bestEntry = tableEntry;
 #endif
                 }
@@ -136,7 +136,7 @@ bool HashTable::insert(const HashEntry& entry)
 
         if (bestReplacement >= 0)
         {
-#ifdef MULTITHREADED
+#if MULTITHREADED
             m_hashTable[cacheLineStartIndex + bestReplacement].compare_exchange_weak(bestEntry, entry, std::memory_order_relaxed);
 #else
             m_hashTable[cacheLineStartIndex + bestReplacement] = entry;
@@ -155,7 +155,7 @@ uint64_t HashTable::find(const Position& pos, uint16_t depth)
 
     for (int i = 0; i < 4; ++i)
     {
-#ifdef MULTITHREADED
+#if MULTITHREADED
         HashEntry entry = m_hashTable[cacheLineStartIndex + i].load(std::memory_order_relaxed);
 #else
         HashEntry entry = m_hashTable[cacheLineStartIndex + i];

@@ -5,13 +5,13 @@
 #include "Config.hpp"
 #include "Make.hpp"
 #include "MoveGeneration.hpp"
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
 #include "Stats.hpp"
 #endif
-#ifdef HASH_TABLE
+#if HASH_TABLE
 #include "HashTable.hpp"
 #endif
-#ifdef MULTITHREADED
+#if MULTITHREADED
 #include "WorkQueue.hpp"
 #endif
 #include <cassert>
@@ -21,20 +21,20 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
 {
     const Move* stack0 = stack;
 
-#ifndef LEAF_NODE_BULK_COUNT
+#if !LEAF_NODE_BULK_COUNT
     if (depth == 0) return 1;
 #endif
 
-#ifdef HASH_TABLE
+#if HASH_TABLE
     if (depth >= MinHashDepth) // Don't probe at last levels, because memory access is slower than calculation
     {
         uint64_t entry = hashTable->find(pos, depth);
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
         statsHashProbes++;
 #endif
         if (entry != InvalidHashTableEntry)
         {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
             statsHashHits++;
 #endif
             return entry;
@@ -49,7 +49,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
     uint64_t checkers = findPinsAndCheckers(pos, occ, pins);
     uint64_t pArea = findProtectionArea(pos, occ);
 
-#ifdef LEAF_NODE_BULK_COUNT
+#if LEAF_NODE_BULK_COUNT
     if (depth == 1)
     {
         uint64_t count = 0;
@@ -59,7 +59,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
             count = countCheckEvasions(pos, occ, pArea, checkers, pins);
             if (stack == stack0)
             {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                 statsCheckmates++;
 #endif
             }
@@ -75,15 +75,15 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
             count += countCastling(pos, occ, pArea);
         }
         
-#ifdef HASH_TABLE
+#if HASH_TABLE
         if (1 >= MinHashDepth)
         {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
             statsHashWriteTries++;
 #endif
             if (hashTable->insert({ pos, static_cast<uint16_t>(depth), count }))
             {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                 statsHashWrites++;
 #endif
             }
@@ -99,7 +99,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
             stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, pins);
             if (stack == stack0)
             {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                 statsCheckmates++;
 #endif
             }
@@ -124,15 +124,15 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
             count += perft(tmpPos, depth - 1, stack);
         }
 
-#ifdef HASH_TABLE
+#if HASH_TABLE
         if (depth >= MinHashDepth)
         {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
             statsHashWriteTries++;
 #endif
             if (hashTable->insert({ pos, static_cast<uint16_t>(depth), count }))
             {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                 statsHashWrites++;
 #endif
             }
@@ -143,7 +143,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
     }
 }
 
-#ifdef MULTITHREADED
+#if MULTITHREADED
 
 constexpr size_t MaxWorkQueueSize = 256;
 constexpr int MaxMoveStackSize = 1024 * 8;
@@ -198,7 +198,7 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
 {
     const Move* stack0 = stack;
 
-#ifndef LEAF_NODE_BULK_COUNT
+#if !LEAF_NODE_BULK_COUNT
     if (depth == 0) return 1;
 #endif
 
@@ -214,7 +214,7 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
         stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, pins);
         if (stack == stack0)
         {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
             statsCheckmates++;
 #endif
         }
@@ -230,7 +230,7 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
         stack = generateCastling(pos, stack, occ, pArea);
     }
 
-#ifdef LEAF_NODE_BULK_COUNT
+#if LEAF_NODE_BULK_COUNT
     if (depth == 1)
     {
         return static_cast<uint64_t>(stack - stack0);

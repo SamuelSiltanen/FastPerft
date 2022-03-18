@@ -3,12 +3,12 @@
 
 #include "Stats.hpp"
 
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
 
 #include <cstdio>
 #include <cinttypes>
 
-#ifdef HASH_TABLE
+#if HASH_TABLE
 #include "HashTable.hpp"
 #endif
 
@@ -44,16 +44,16 @@ void printStats(uint64_t count)
     int sHWts = statsHashWriteTries;
     int sHWrs = statsHashWrites;
     printf("Node count = %" PRIu64 " Captures = %d EPs = %d Castles = %d Checkmates = %d"
-#ifdef HASH_TABLE
+#if HASH_TABLE
         " Hash probes = %d Hash hits = %d Hash write tries = %d Hash writes = %d"
 #endif
         "\n",
         count, sCaps, sEPs, sCsls, sChks
-#ifdef HASH_TABLE
+#if HASH_TABLE
         , sHPrs, sHHts, sHWts, sHWrs
 #endif
     );
-#ifdef HASH_TABLE
+#if HASH_TABLE
     float hashTableHitRate = (float)statsHashHits / (float)statsHashProbes;
     float hashCollisionRate = (float)(statsHashWriteTries - statsHashWrites) / (float)(statsHashWriteTries);
     printf("Hash table size %dk elements, read hit rate %f %%, write collision rate %f %%\n",

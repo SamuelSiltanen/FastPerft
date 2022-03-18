@@ -7,7 +7,7 @@
 #include "Config.hpp"
 
 uint64_t perft(const Position& pos, int depth, Move* stack);
-#ifdef MULTITHREADED
+#if MULTITHREADED
 enum class RunState
 {
     Initializing,

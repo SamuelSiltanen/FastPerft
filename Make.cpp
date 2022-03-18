@@ -3,10 +3,10 @@
 
 #include "Make.hpp"
 #include "Config.hpp"
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
 #include "Stats.hpp"
 #endif
-#ifdef HASH_TABLE
+#if HASH_TABLE
 #include "HashTable.hpp"
 #endif
 
@@ -18,11 +18,11 @@ Position make(const Position& pos, const Move& move)
     uint64_t dst = (1ULL << (move.dst()));
     Piece piece = move.piece();
 
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
     if (dst & (next.p | next.n | next.bq | next.rq)) statsCaptures++;
 #endif
 
-#ifdef HASH_TABLE    
+#if HASH_TABLE    
     const HashTable::Hashes& srcHash = HashTable::hashSquare(move.src());
     const HashTable::Hashes& dstHash = HashTable::hashSquare(move.dst());
 
@@ -45,14 +45,14 @@ Position make(const Position& pos, const Move& move)
     if (next.state & TurnWhite)
     {
         next.w ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
         next.hash ^= srcHash.w;
         next.hash ^= dstHash.w;
 #endif
     }
     else
     {
-#ifdef HASH_TABLE
+#if HASH_TABLE
         if (next.w & dst) next.hash ^= dstHash.w;
 #endif
         next.w &= ~dst; // Handle capture here, because we test for white here anyway
@@ -64,7 +64,7 @@ Position make(const Position& pos, const Move& move)
     if (piece == Pawn)
     {
         next.p ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
         next.hash ^= srcHash.p;
         next.hash ^= dstHash.p;
 #endif
@@ -73,7 +73,7 @@ Position make(const Position& pos, const Move& move)
         if (move.prom())
         {
             next.p ^= dst;
-#ifdef HASH_TABLE
+#if HASH_TABLE
             next.hash ^= dstHash.p;
 #endif
             switch (move.prom())
@@ -81,25 +81,25 @@ Position make(const Position& pos, const Move& move)
             case Queen:
                 next.bq ^= dst;
                 next.rq ^= dst;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                 next.hash ^= dstHash.q;
 #endif
                 break;
             case Rook:
                 next.rq ^= dst;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                 next.hash ^= dstHash.r;
 #endif
                 break;
             case Bishop:
                 next.bq ^= dst;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                 next.hash ^= dstHash.b;
 #endif
                 break;
             case Knight:
                 next.n ^= dst;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                 next.hash ^= dstHash.n;
 #endif
                 break;
@@ -118,10 +118,10 @@ Position make(const Position& pos, const Move& move)
                 {
                     mov = (1ULL << (EPSquare + 8));
                     next.p ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                     next.hash ^= HashTable::hashSquare(EPSquare + 8).p;
 #endif
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                     statsCaptures++;
                     statsEPs++;
 #endif
@@ -131,11 +131,11 @@ Position make(const Position& pos, const Move& move)
                     mov = (1ULL << (EPSquare - 8));
                     next.p ^= mov;
                     next.w ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                     next.hash ^= HashTable::hashSquare(EPSquare - 8).p;
                     next.hash ^= HashTable::hashSquare(EPSquare - 8).w;
 #endif
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                     statsCaptures++;
                     statsEPs++;
 #endif
@@ -165,7 +165,7 @@ Position make(const Position& pos, const Move& move)
     else if (piece == Knight)
     {
         next.n ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
         next.hash ^= srcHash.n;
         next.hash ^= dstHash.n;
 #endif
@@ -173,7 +173,7 @@ Position make(const Position& pos, const Move& move)
     else if (piece == Bishop)
     {
         next.bq ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
         next.hash ^= srcHash.b;
         next.hash ^= dstHash.b;
 #endif
@@ -182,7 +182,7 @@ Position make(const Position& pos, const Move& move)
     {
         next.bq ^= mov;
         next.rq ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
         next.hash ^= srcHash.q;
         next.hash ^= dstHash.q;
 #endif
@@ -193,7 +193,7 @@ Position make(const Position& pos, const Move& move)
     else if (piece == Rook)
     {
         next.rq ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
         next.hash ^= srcHash.r;
         next.hash ^= dstHash.r;
 #endif
@@ -225,7 +225,7 @@ Position make(const Position& pos, const Move& move)
     else if (piece == King)
     {
         next.k ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
         next.hash ^= srcHash.k;
         next.hash ^= dstHash.k;
 #endif
@@ -242,11 +242,11 @@ Position make(const Position& pos, const Move& move)
                 mov = 0xa000000000000000ULL;
                 next.rq ^= mov;
                 next.w ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                 next.hash ^= (HashTable::hashSquare(63).r | HashTable::hashSquare(61).r);
                 next.hash ^= (HashTable::hashSquare(63).w | HashTable::hashSquare(61).w);
 #endif
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                 statsCastles++;
 #endif
             }
@@ -255,11 +255,11 @@ Position make(const Position& pos, const Move& move)
                 mov = 0x0900000000000000ULL;
                 next.rq ^= mov;
                 next.w ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                 next.hash ^= (HashTable::hashSquare(56).r | HashTable::hashSquare(59).r);
                 next.hash ^= (HashTable::hashSquare(56).w | HashTable::hashSquare(59).w);
 #endif
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                 statsCastles++;
 #endif
             }
@@ -270,10 +270,10 @@ Position make(const Position& pos, const Move& move)
             {
                 mov = 0x00000000000000a0ULL;
                 next.rq ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                 next.hash ^= (HashTable::hashSquare(7).r | HashTable::hashSquare(5).r);
 #endif
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                 statsCastles++;
 #endif
             }
@@ -281,10 +281,10 @@ Position make(const Position& pos, const Move& move)
             {
                 mov = 0x0000000000000009ULL;
                 next.rq ^= mov;
-#ifdef HASH_TABLE
+#if HASH_TABLE
                 next.hash ^= (HashTable::hashSquare(0).r | HashTable::hashSquare(3).r);
 #endif
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
                 statsCastles++;
 #endif
             }
@@ -300,14 +300,14 @@ Position make(const Position& pos, const Move& move)
         if (move.dst() == 63) next.state &= ~CastlingWhiteShort;
     }
 
-#ifdef HASH_TABLE
+#if HASH_TABLE
     next.hash ^= HashTable::hashEP(pos.state, next.state);
     next.hash ^= HashTable::hashCastling(pos.state, next.state);
 #endif    
 
     // Update state
     next.state ^= 1;
-#ifdef HASH_TABLE
+#if HASH_TABLE
     next.hash ^= HashTable::hashTurn();
 #endif
 

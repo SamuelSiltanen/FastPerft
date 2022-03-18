@@ -5,7 +5,7 @@
 
 #include "Config.hpp"
 
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
 
 #include <atomic>
 

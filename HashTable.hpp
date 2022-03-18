@@ -7,7 +7,7 @@
 #include "Config.hpp"
 
 #include <cassert>
-#ifdef MULTITHREADED
+#if MULTITHREADED
 #include <atomic>
 #endif
 
@@ -108,7 +108,7 @@ private:
 
     void initHashes();
 
-#ifdef MULTITHREADED
+#if MULTITHREADED
     std::atomic<HashEntry>* m_hashTable;
 #else
     HashEntry* m_hashTable;

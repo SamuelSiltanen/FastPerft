@@ -13,15 +13,15 @@
 #include "TestPositions.hpp"
 #include "FENParser.hpp"
 
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
 #include "Stats.hpp"
 #endif
 
-#ifdef HASH_TABLE
+#if HASH_TABLE
 #include "HashTable.hpp"
 #endif
 
-#ifdef HASH_TABLE
+#if HASH_TABLE
 HashTable* hashTable = nullptr;
 #endif
 
@@ -42,7 +42,7 @@ int main(int argc, char** argv)
 {       
     PerftParams params = parseCommandLine(argc, argv);
 
-#ifdef HASH_TABLE
+#if HASH_TABLE
     hashTable = new HashTable(params.hashTableSize);
 
     params.position.hash = HashTable::calcHash(params.position);
@@ -52,7 +52,7 @@ int main(int argc, char** argv)
     
     testPerft(params.position, params.depth);
 
-#ifdef HASH_TABLE
+#if HASH_TABLE
     delete hashTable;
 #endif
 
@@ -63,7 +63,7 @@ PerftParams parseCommandLine(int argc, char** argv)
 {
     PerftParams params;
     params.depth = 1;
-#ifdef HASH_TABLE
+#if HASH_TABLE
     params.hashTableSize = DefaultHashTableSize;
 #else
     params.hashTableSize = 0;
@@ -157,17 +157,17 @@ void printUsage()
 
 void testPerft(const Position& pos, int depth)
 {
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
     resetStats();
 #endif
 
-#ifdef MULTITHREADED
+#if MULTITHREADED
     initMultiPerft();
 #endif    
 
     auto start = std::chrono::high_resolution_clock::now();
 
-#ifdef MULTITHREADED
+#if MULTITHREADED
     uint64_t count = runMultiPerft(pos, depth);
 #else
     Move stack[1024];
@@ -179,13 +179,13 @@ void testPerft(const Position& pos, int depth)
 
     double nps = static_cast<double>(count) / elapsed.count() / 1e6;
 
-#ifdef COLLECT_STATS
+#if COLLECT_STATS
     printStats(count);
 #else
     printf("Node count = %" PRIu64 " Time %.3f s Speed: %.3f Mnps\n", count, elapsed.count(), nps);
 #endif
 
-#ifdef MULTITHREADED
+#if MULTITHREADED
     releaseMultiPerft();
 #endif
 }
