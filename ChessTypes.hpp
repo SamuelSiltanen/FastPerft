@@ -57,14 +57,10 @@ struct alignas(2) Move
     __forceinline Piece prom() const { return (packed & 0x8000) ? static_cast<Piece>((packed >> 12) & 7) : None; }
 };
 
-struct RookPins
+struct Pins
 {
     uint64_t pinnedSN;
     uint64_t pinnedWE;
-};
-
-struct BishopPins
-{
     uint64_t pinnedSWNE;
     uint64_t pinnedSENW;
 };

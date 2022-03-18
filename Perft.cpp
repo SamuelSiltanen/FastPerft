@@ -44,10 +44,9 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
 
     uint64_t occ = pos.p | pos.n | pos.bq | pos.rq | pos.k;
 
-    BishopPins bPins;
-    RookPins rPins;
+    Pins pins;
 
-    uint64_t checkers = findPinsAndCheckers(pos, occ, bPins, rPins);
+    uint64_t checkers = findPinsAndCheckers(pos, occ, pins);
     uint64_t pArea = findProtectionArea(pos, occ);
 
 #ifdef LEAF_NODE_BULK_COUNT
@@ -57,7 +56,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
 
         if (checkers)
         {
-            count = countCheckEvasions(pos, occ, pArea, checkers, bPins, rPins);
+            count = countCheckEvasions(pos, occ, pArea, checkers, pins);
             if (stack == stack0)
             {
 #ifdef COLLECT_STATS
@@ -67,11 +66,11 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         }
         else
         {
-            count += countP(pos, occ, bPins, rPins);
-            count += countN(pos, occ, bPins.pinnedSENW | bPins.pinnedSWNE | rPins.pinnedSN | rPins.pinnedWE);
-            count += countB(pos, occ, bPins, rPins);
-            count += countR(pos, occ, bPins, rPins);
-            count += countQ(pos, occ, bPins, rPins);
+            count += countP(pos, occ, pins);
+            count += countN(pos, occ, pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE);
+            count += countB(pos, occ, pins);
+            count += countR(pos, occ, pins);
+            count += countQ(pos, occ, pins);
             count += countK(pos, occ, pArea);
             count += countCastling(pos, occ, pArea);
         }
@@ -97,7 +96,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
     {
         if (checkers)
         {
-            stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, bPins, rPins);
+            stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, pins);
             if (stack == stack0)
             {
 #ifdef COLLECT_STATS
@@ -107,11 +106,11 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         }
         else
         {
-            stack = generateP(pos, stack, occ, bPins, rPins);
-            stack = generateN(pos, stack, occ, bPins.pinnedSENW | bPins.pinnedSWNE | rPins.pinnedSN | rPins.pinnedWE);
-            stack = generateB(pos, stack, occ, bPins, rPins);
-            stack = generateR(pos, stack, occ, bPins, rPins);
-            stack = generateQ(pos, stack, occ, bPins, rPins);
+            stack = generateP(pos, stack, occ, pins);
+            stack = generateN(pos, stack, occ, pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE);
+            stack = generateB(pos, stack, occ, pins);
+            stack = generateR(pos, stack, occ, pins);
+            stack = generateQ(pos, stack, occ, pins);
             stack = generateK(pos, stack, occ, pArea);
             stack = generateCastling(pos, stack, occ, pArea);
         }
@@ -205,15 +204,14 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
 
     uint64_t occ = pos.p | pos.n | pos.bq | pos.rq | pos.k;
 
-    BishopPins bPins;
-    RookPins rPins;
+    Pins pins;
 
-    uint64_t checkers = findPinsAndCheckers(pos, occ, bPins, rPins);
+    uint64_t checkers = findPinsAndCheckers(pos, occ, pins);
     uint64_t pArea = findProtectionArea(pos, occ);
 
     if (checkers)
     {
-        stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, bPins, rPins);
+        stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, pins);
         if (stack == stack0)
         {
 #ifdef COLLECT_STATS
@@ -223,11 +221,11 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
     }
     else
     {
-        stack = generateP(pos, stack, occ, bPins, rPins);
-        stack = generateN(pos, stack, occ, bPins.pinnedSENW | bPins.pinnedSWNE | rPins.pinnedSN | rPins.pinnedWE);
-        stack = generateB(pos, stack, occ, bPins, rPins);
-        stack = generateR(pos, stack, occ, bPins, rPins);
-        stack = generateQ(pos, stack, occ, bPins, rPins);
+        stack = generateP(pos, stack, occ, pins);
+        stack = generateN(pos, stack, occ, pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE);
+        stack = generateB(pos, stack, occ, pins);
+        stack = generateR(pos, stack, occ, pins);
+        stack = generateQ(pos, stack, occ, pins);
         stack = generateK(pos, stack, occ, pArea);
         stack = generateCastling(pos, stack, occ, pArea);
     }
