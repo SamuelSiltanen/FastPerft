@@ -37,6 +37,12 @@ enum Piece
     EP
 };
 
+enum Color
+{
+    Black,
+    White
+};
+
 struct alignas(2) Move
 {
     uint16_t packed;

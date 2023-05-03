@@ -10,6 +10,205 @@
 #include "HashTable.hpp"
 #endif
 
+#include <immintrin.h>
+
+#if !HASH_TABLE && !COLLECT_HASH
+
+Position make(const Position& pos, const Move& move)
+{
+    Position next = pos;
+
+    uint64_t src = (1ULL << (move.src()));
+    uint64_t dst = (1ULL << (move.dst()));
+    Piece piece = move.piece();
+    
+    uint64_t mov = src | dst;
+    
+    // Capture if any
+    __m256i pieces = _mm256_load_si256((__m256i*)&next);
+    __m256i capture = _mm256_set1_epi64x(dst);
+    pieces = _mm256_andnot_si256(capture, pieces);
+    _mm256_storeu_si256((__m256i*)&next, pieces);    
+
+    if (next.state & TurnWhite)
+    {
+        next.w ^= mov;
+    }
+    else
+    {
+        next.w &= ~dst; // Handle capture here, because we test for white here anyway
+    }
+
+    // Clear EP after any move (may be reset below)
+    next.state &= 0xfffffffffffff01f;
+
+    if (piece == Pawn)
+    {
+        next.p ^= mov;
+
+        // Promotion
+        if (move.prom())
+        {
+            next.p ^= dst;
+            switch (move.prom())
+            {
+            case Queen:
+                next.bq ^= dst;
+                next.rq ^= dst;
+                break;
+            case Rook:
+                next.rq ^= dst;
+                break;
+            case Bishop:
+                next.bq ^= dst;
+                break;
+            case Knight:
+                next.n ^= dst;
+                break;
+            default:
+                break;
+            }
+        }
+
+        // Capture EP pawn
+        if (pos.state & EPValid)
+        {
+            uint64_t EPSquare = (pos.state >> 5) & 63;
+            if (move.dst() == EPSquare)
+            {
+                if (pos.state & TurnWhite)
+                {
+                    mov = (1ULL << (EPSquare + 8));
+                    next.p ^= mov;
+                }
+                else
+                {
+                    mov = (1ULL << (EPSquare - 8));
+                    next.p ^= mov;
+                    next.w ^= mov;
+                }
+            }
+        }
+
+        // Set new EP square if double pawn move
+        uint64_t EPSquare = 0;
+        if (next.state & TurnWhite)
+        {
+            if ((move.src() >> 3) == 6 && (move.dst() >> 3) == 4)
+            {
+                EPSquare = static_cast<uint64_t>(move.src()) - 8 + 64;
+            }
+        }
+        else
+        {
+            if ((move.src() >> 3) == 1 && (move.dst() >> 3) == 3)
+            {
+                EPSquare = static_cast<uint64_t>(move.src()) + 8 + 64;
+            }
+        }
+        next.state |= (EPSquare << 5);
+    }
+
+    else if (piece == Knight)
+    {
+        next.n ^= mov;
+    }
+    else if (piece == Bishop)
+    {
+        next.bq ^= mov;
+    }
+    else if (piece == Queen)
+    {
+        next.bq ^= mov;
+        next.rq ^= mov;
+    }
+
+    // Invalidate castling when R or K moves or when there is a capture to rook square
+    // TODO: The conditions can be combined to test just if the squares are involved in the move
+    else if (piece == Rook)
+    {
+        next.rq ^= mov;
+
+        if (next.state & TurnWhite)
+        {
+            if (move.src() == 63)
+            {
+                next.state &= ~CastlingWhiteShort;
+            }
+            else if (move.src() == 56)
+            {
+                next.state &= ~CastlingWhiteLong;
+            }
+        }
+        else
+        {
+            if (move.src() == 7)
+            {
+                next.state &= ~CastlingBlackShort;
+            }
+            else if (move.src() == 0)
+            {
+                next.state &= ~CastlingBlackLong;
+            }
+        }
+    }
+
+    else if (piece == King)
+    {
+        next.k ^= mov;
+
+        next.state &= (next.state & TurnWhite) ?
+            ~(CastlingWhiteShort | CastlingWhiteLong) :
+            ~(CastlingBlackShort | CastlingBlackLong);
+
+        // Castling rook move
+        if (next.state & TurnWhite)
+        {
+            if (move.packed == 0x6fbc)
+            {
+                mov = 0xa000000000000000ULL;
+                next.rq ^= mov;
+                next.w ^= mov;
+            }
+            else if (move.packed == 0x6ebc)
+            {
+                mov = 0x0900000000000000ULL;
+                next.rq ^= mov;
+                next.w ^= mov;
+            }
+        }
+        else
+        {
+            if (move.packed == 0x6184)
+            {
+                mov = 0x00000000000000a0ULL;
+                next.rq ^= mov;
+            }
+            else if (move.packed == 0x6084)
+            {
+                mov = 0x0000000000000009ULL;
+                next.rq ^= mov;
+            }
+        }
+    }
+
+    // It actually doesn't matter if there is a rook or not, or even whose move it is
+    if (dst & 0x8100000000000081ULL)
+    {
+        if (move.dst() == 0) next.state &= ~CastlingBlackLong;
+        if (move.dst() == 7) next.state &= ~CastlingBlackShort;
+        if (move.dst() == 56) next.state &= ~CastlingWhiteLong;
+        if (move.dst() == 63) next.state &= ~CastlingWhiteShort;
+    }
+
+    // Update state
+    next.state ^= 1;
+
+    return next;
+}
+
+#else
+
 Position make(const Position& pos, const Move& move)
 {
     Position next = pos;
@@ -314,3 +513,4 @@ Position make(const Position& pos, const Move& move)
     return next;
 }
 
+#endif

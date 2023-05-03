@@ -171,7 +171,7 @@ void testPerft(const Position& pos, int depth)
     uint64_t count = runMultiPerft(pos, depth);
 #else
     Move stack[1024];
-    uint64_t count = perft(pos, depth, stack);
+    uint64_t count = pos.state & TurnWhite ? perft<White>(pos, depth, stack) : perft<Black>(pos, depth, stack);
 #endif
 
     auto stop = std::chrono::high_resolution_clock::now();
