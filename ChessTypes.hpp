@@ -25,7 +25,7 @@ struct alignas(64) Position
     uint64_t hash = 0;
 };
 
-enum Piece
+enum Piece : uint16_t
 {
     None,
     Pawn,
@@ -43,24 +43,54 @@ enum Color
     White
 };
 
+enum Square : uint16_t
+{
+    A8, B8, C8, D8, E8, F8, G8, H8,
+    A7, B7, C7, D7, E7, F7, G7, H7,
+    A6, B6, C6, D6, E6, F6, G6, H6,
+    A5, B5, C5, D5, E5, F5, G5, H5,
+    A4, B4, C4, D4, E4, F4, G4, H4,
+    A3, B3, C3, D3, E3, F3, G3, H3,
+    A2, B2, C2, D2, E2, F2, G2, H2,
+    A1, B1, C1, D1, E1, F1, G1, H1
+};
+
 struct alignas(2) Move
 {
     uint16_t packed;
 
     Move() : packed(0) {}
 
+    Move(Piece piece, Square src, Square dst)
+        : packed(src | (dst << 6) | (piece << 12))
+    {}
+
     Move(Piece piece, unsigned long src, unsigned long dst)
         : packed(static_cast<uint16_t>(src | (dst << 6) | (piece << 12)))
     {}
 
-    Move(Piece piece, unsigned long src, unsigned long dst, Piece prom)
-        : packed(static_cast<uint16_t>(src | (dst << 6) | (prom << 12) | 0x8000))
+    Move(Piece piece, uint64_t src, uint64_t dst)
+        : packed(static_cast<uint16_t>(src | (dst << 6)) | (piece << 12))
     {}
+
+    Move(Piece piece, unsigned long src, unsigned long dst, Piece prom)
+        : packed(static_cast<uint16_t>(src | (dst << 6) | 0x8000) | (prom << 12))
+    {}
+
+    bool operator==(const Move& other) const { return other.packed == packed; }
 
     __forceinline uint16_t src() const { return packed & 0x3f; }
     __forceinline uint16_t dst() const { return (packed >> 6) & 0x3f; }
     __forceinline Piece piece() const { return (packed & 0x8000) ? Pawn : static_cast<Piece>(packed >> 12); }
     __forceinline Piece prom() const { return (packed & 0x8000) ? static_cast<Piece>((packed >> 12) & 7) : None; }
+};
+
+struct MoveHash
+{
+    size_t operator()(const Move& move) const
+    {
+        return static_cast<size_t>(move.packed);
+    }
 };
 
 struct Pins

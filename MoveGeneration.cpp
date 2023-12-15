@@ -1092,7 +1092,7 @@ Move* generateCastling(const Position& pos, Move* stack,  uint64_t occ, uint64_t
         {
             if ((pArea & 0x7000000000000000ULL) == 0 && (occ & 0x6000000000000000ULL) == 0)
             {
-                *stack = Move(King, 60, 62);
+                *stack = Move(King, E1, G1);
                 ++stack;
             }
         }
@@ -1100,7 +1100,7 @@ Move* generateCastling(const Position& pos, Move* stack,  uint64_t occ, uint64_t
         {
             if ((pArea & 0x1c00000000000000ULL) == 0 && (occ & 0x0e00000000000000ULL) == 0)
             {
-                *stack = Move(King, 60, 58);
+                *stack = Move(King, E1, C1);
                 ++stack;
             }
         }
@@ -1111,7 +1111,7 @@ Move* generateCastling(const Position& pos, Move* stack,  uint64_t occ, uint64_t
         {
             if ((pArea & 0x0000000000000070ULL) == 0 && (occ & 0x0000000000000060ULL) == 0)
             {
-                *stack = Move(King, 4, 6);
+                *stack = Move(King, E8, G8);
                 ++stack;
             }
         }
@@ -1119,7 +1119,7 @@ Move* generateCastling(const Position& pos, Move* stack,  uint64_t occ, uint64_t
         {
             if ((pArea & 0x000000000000001cULL) == 0 && (occ & 0x000000000000000eULL) == 0)
             {
-                *stack = Move(King, 4, 2);
+                *stack = Move(King, E8, C8);
                 ++stack;
             }
         }
@@ -1393,56 +1393,56 @@ Move* generateMovesInBetween(const Position& pos, unsigned long dst, Move* stack
 
     if (rays[kingSq].N & (1ULL << dst))
     {
-        for (int i = kingSq - 8; i > dst; i -= 8)
+        for (unsigned long i = dst + 8; i < kingSq; i += 8)
         {
             stack = generateMovesTo(pos, i, stack, occ, pins);
         }
     }
     else if (rays[kingSq].S & (1ULL << dst))
     {
-        for (int i = kingSq + 8; i < dst; i += 8)
+        for (unsigned long i = kingSq + 8; i < dst; i += 8)
         {
             stack = generateMovesTo(pos, i, stack, occ, pins);
         }
     }
     else if (rays[kingSq].W & (1ULL << dst))
     {
-        for (int i = kingSq - 1; i > dst; i--)
+        for (unsigned long i = dst + 1; i < kingSq; i++)
         {
             stack = generateMovesTo(pos, i, stack, occ, pins);
         }
     }
     else if (rays[kingSq].E & (1ULL << dst))
     {
-        for (int i = kingSq + 1; i < dst; i++)
+        for (unsigned long i = kingSq + 1; i < dst; i++)
         {
             stack = generateMovesTo(pos, i, stack, occ, pins);
         }
     }
     else if (rays[kingSq].SW & (1ULL << dst))
     {
-        for (int i = kingSq + 7; i < dst; i += 7)
+        for (unsigned long i = kingSq + 7; i < dst; i += 7)
         {
             stack = generateMovesTo(pos, i, stack, occ, pins);
         }
     }
     else if (rays[kingSq].NW & (1ULL << dst))
     {
-        for (int i = kingSq - 9; i > dst; i -= 9)
+        for (unsigned long i = dst + 9; i < kingSq; i += 9)
         {
             stack = generateMovesTo(pos, i, stack, occ, pins);
         }
     }
     else if (rays[kingSq].NE & (1ULL << dst))
     {
-        for (int i = kingSq - 7; i > dst; i -= 7)
+        for (unsigned long i = dst + 7; i < kingSq; i += 7)
         {
             stack = generateMovesTo(pos, i, stack, occ, pins);
         }
     }
     else if (rays[kingSq].SE & (1ULL << dst))
     {
-        for (int i = kingSq + 9; i < dst; i += 9)
+        for (unsigned long i = kingSq + 9; i < dst; i += 9)
         {
             stack = generateMovesTo(pos, i, stack, occ, pins);
         }
@@ -1477,7 +1477,7 @@ uint64_t countP<Black>(const Position& pos, uint64_t occ, const Pins& pins)
 {
     uint64_t count = 0;
 
-    unsigned long src, dst;
+    unsigned long src;
 
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
     
@@ -1581,7 +1581,7 @@ uint64_t countP<White>(const Position& pos, uint64_t occ, const Pins& pins)
 {
     uint64_t count = 0;
 
-    unsigned long src, dst;
+    unsigned long src;
 
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
    
@@ -2045,7 +2045,6 @@ uint64_t countMovesTo<Black>(const Position& pos, unsigned long dst, uint64_t oc
         }
     }
 
-    unsigned long src;
     uint64_t pcs = pos.n & our & nmoves[dst] & ~anyPins;
     count += __popcnt64(pcs);
 
@@ -2146,7 +2145,6 @@ uint64_t countMovesTo<White>(const Position& pos, unsigned long dst, uint64_t oc
         }
     }
 
-    unsigned long src;
     uint64_t pcs = pos.n & our & nmoves[dst] & ~anyPins;
     count += __popcnt64(pcs);
 
@@ -2350,10 +2348,11 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
     uint64_t rPcs = pos.rq & their;
 
     unsigned long hit1, hit2;
-    uint64_t attackers = rays[src].SE & bPcs;
+    uint64_t ray = rays[src].SE;
+    uint64_t attackers = ray & bPcs;
     if (attackers)
     {        
-        uint64_t ray = rays[src].SE & occ;
+        ray &= occ;
         _BitScanForward64(&hit1, ray);
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & bPcs;
@@ -2364,10 +2363,11 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
             pins.pinnedSENW |= potentialPinned;
     }
 
-    attackers = rays[src].NW & bPcs;
+    ray = rays[src].NW;
+    attackers = ray & bPcs;
     if (attackers)
     {
-        uint64_t ray = rays[src].NW & occ;
+        ray &= occ;
         _BitScanReverse64(&hit1, ray);
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & bPcs;
@@ -2378,10 +2378,11 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
             pins.pinnedSENW |= potentialPinned;
     }
 
-    attackers = rays[src].SW & bPcs;
+    ray = rays[src].SW;
+    attackers = ray & bPcs;
     if (attackers)
     {
-        uint64_t ray = rays[src].SW & occ;
+        ray &= occ;
         _BitScanForward64(&hit1, ray);
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & bPcs;
@@ -2392,10 +2393,11 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
             pins.pinnedSWNE |= potentialPinned;
     }
 
-    attackers = rays[src].NE & bPcs;
+    ray = rays[src].NE;
+    attackers = ray & bPcs;
     if (attackers)
     {
-        uint64_t ray = rays[src].NE & occ;
+        ray &= occ;
         _BitScanReverse64(&hit1, ray);
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & bPcs;
@@ -2406,10 +2408,11 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
             pins.pinnedSWNE |= potentialPinned;
     }
 
-    attackers = rays[src].S & rPcs;
+    ray = rays[src].S;
+    attackers = ray & rPcs;
     if (attackers)
     {
-        uint64_t ray = rays[src].S & occ;
+        ray &= occ;
         _BitScanForward64(&hit1, ray);
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & rPcs;
@@ -2420,10 +2423,11 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
             pins.pinnedSN |= potentialPinned;
     }
 
-    attackers = rays[src].N & rPcs;
+    ray = rays[src].N;
+    attackers = ray & rPcs;
     if (attackers)
     {
-        uint64_t ray = rays[src].N & occ;
+        ray &= occ;
         _BitScanReverse64(&hit1, ray);
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & rPcs;
@@ -2434,10 +2438,11 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
             pins.pinnedSN |= potentialPinned;
     }
 
-    attackers = rays[src].W & rPcs;
+    ray = rays[src].W;
+    attackers = ray & rPcs;
     if (attackers)
     {
-        uint64_t ray = rays[src].W & occ;
+        ray &= occ;
         _BitScanReverse64(&hit1, ray);
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & rPcs;
@@ -2448,10 +2453,11 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
             pins.pinnedWE |= potentialPinned;
     }
 
-    attackers = rays[src].E & rPcs;
+    ray = rays[src].E;
+    attackers = ray & rPcs;
     if (attackers)
     {
-        uint64_t ray = rays[src].E & occ;
+        ray &= occ;
         _BitScanForward64(&hit1, ray);
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & rPcs;
@@ -2493,12 +2499,11 @@ uint64_t findProtectionArea(const Position& pos, uint64_t occ)
 
     occ ^= (pos.k & ~their); // King doesn't block the sliding pieces' protection area
 
-    pcs = pos.bq & their;    
+    pcs = pos.bq & their;
     while (_BitScanForward64(&src, pcs))
     {
         pcs &= (pcs - 1);
         pArea |= bmoves(src, occ);
-        
     }
 
     pcs = pos.rq & their;
@@ -2506,7 +2511,6 @@ uint64_t findProtectionArea(const Position& pos, uint64_t occ)
     {
         pcs &= (pcs - 1);
         pArea |= rmoves(src, occ);
-
     }
 
     pcs = pos.k & their;

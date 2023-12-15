@@ -3,6 +3,7 @@
 
 #include "WorkQueue.hpp"
 #include <cassert>
+#include <malloc.h>
 
 WorkQueue::WorkQueue(size_t size)
     : m_front(0)
@@ -10,14 +11,14 @@ WorkQueue::WorkQueue(size_t size)
     , m_size(size)
     , m_elements(0)
 {
-    m_buffer = new WorkItem[size];
+    m_buffer = static_cast<WorkItem*>(_aligned_malloc(size * sizeof(WorkItem), alignof(WorkItem)));
 }
 
 WorkQueue::~WorkQueue()
 {
     if (m_buffer)
     {
-        delete[] m_buffer;
+        _aligned_free(m_buffer);
         m_buffer = nullptr;
     }
 }

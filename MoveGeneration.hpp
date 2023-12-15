@@ -55,56 +55,56 @@ uint64_t countMovesInBetween(const Position& pos, unsigned long dst, uint64_t oc
 
     if (rays[kingSq].N & (1ULL << dst))
     {
-        for (int i = kingSq - 8; i > dst; i -= 8)
+        for (unsigned long i = dst + 8; i < kingSq; i += 8)
         {
             count += countMovesTo<C>(pos, i, occ, pins);
         }
     }
     else if (rays[kingSq].S & (1ULL << dst))
     {
-        for (int i = kingSq + 8; i < dst; i += 8)
+        for (unsigned long i = kingSq + 8; i < dst; i += 8)
         {
             count += countMovesTo<C>(pos, i, occ, pins);
         }
     }
     else if (rays[kingSq].W & (1ULL << dst))
     {
-        for (int i = kingSq - 1; i > dst; i--)
+        for (unsigned long i = dst + 1; i < kingSq; i++)
         {
             count += countMovesTo<C>(pos, i, occ, pins);
         }
     }
     else if (rays[kingSq].E & (1ULL << dst))
     {
-        for (int i = kingSq + 1; i < dst; i++)
+        for (unsigned long i = kingSq + 1; i < dst; i++)
         {
             count += countMovesTo<C>(pos, i, occ, pins);
         }
     }
     else if (rays[kingSq].SW & (1ULL << dst))
     {
-        for (int i = kingSq + 7; i < dst; i += 7)
+        for (unsigned long i = kingSq + 7; i < dst; i += 7)
         {
             count += countMovesTo<C>(pos, i, occ, pins);
         }
     }
     else if (rays[kingSq].NW & (1ULL << dst))
     {
-        for (int i = kingSq - 9; i > dst; i -= 9)
+        for (unsigned long i = dst + 9; i < kingSq; i += 9)
         {
             count += countMovesTo<C>(pos, i, occ, pins);
         }
     }
     else if (rays[kingSq].NE & (1ULL << dst))
     {
-        for (int i = kingSq - 7; i > dst; i -= 7)
+        for (unsigned long i = dst + 7; i < kingSq; i += 7)
         {
             count += countMovesTo<C>(pos, i, occ, pins);
         }
     }
     else if (rays[kingSq].SE & (1ULL << dst))
     {
-        for (int i = kingSq + 9; i < dst; i += 9)
+        for (unsigned long i = kingSq + 9; i < dst; i += 9)
         {
             count += countMovesTo<C>(pos, i, occ, pins);
         }
