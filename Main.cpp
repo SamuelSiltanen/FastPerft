@@ -36,7 +36,7 @@ struct PerftParams
 
 PerftParams parseCommandLine(int argc, char** argv);
 void printUsage();
-void testPerft(const Position& pos, int depth);
+void testPerft(const Position& pos, int depth, int numberOfWorkers);
 
 int main(int argc, char** argv)
 {       
@@ -50,7 +50,7 @@ int main(int argc, char** argv)
 
     fillMoveTables();
     
-    testPerft(params.position, params.depth);
+    testPerft(params.position, params.depth, params.numberOfWorkers);
 
 #if HASH_TABLE
     delete hashTable;
@@ -108,6 +108,13 @@ PerftParams parseCommandLine(int argc, char** argv)
                 break;
             }
             params.numberOfWorkers = atoi(argv[i + 1]);
+#if MULTITHREADED
+            if (params.numberOfWorkers < 1 || params.numberOfWorkers > MaxWorkerThreads)
+            {
+                failure = true;
+                break;
+            }
+#endif
             ++i;
             break;
         case 's':
@@ -150,19 +157,20 @@ void printUsage()
     printf("\t-h <size>       Hash table size as an exponent of 2.\n");
     printf("\t                E.g. -h 20 gives 2 ^ 20 = 1048576 hash table entries.\n");
     printf("\t                Default is 26. Negative value disables hash table.\n");
-    printf("\t-w <workers>    Number of worker threads. Default is 8.\n");
+    printf("\t-w <workers>    Number of worker threads (1-64). Default is 8.\n");
+    printf("\t                Used only when compiled with MULTITHREADED.\n");
     printf("\t-s              Print extra stats about moves and hash table.\n");
     printf("\t-f \"<FEN>\"    Position in FEN notation. Remember to use the quotes.\n");
 }
 
-void testPerft(const Position& pos, int depth)
+void testPerft(const Position& pos, int depth, int numberOfWorkers)
 {
 #if COLLECT_STATS
     resetStats();
 #endif
 
 #if MULTITHREADED
-    initMultiPerft();
+    initMultiPerft(numberOfWorkers);
 #endif    
 
     auto start = std::chrono::high_resolution_clock::now();

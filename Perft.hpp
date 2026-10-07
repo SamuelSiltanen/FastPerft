@@ -147,7 +147,9 @@ enum class RunState
 
 extern RunState runState;
 
-void initMultiPerft();
+constexpr int MaxWorkerThreads = 64;
+
+void initMultiPerft(int numWorkers);
 uint64_t runMultiPerft(const Position& pos, int depth);
 void releaseMultiPerft();
 

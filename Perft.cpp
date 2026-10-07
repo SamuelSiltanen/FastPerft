@@ -14,18 +14,18 @@
 
 constexpr size_t MaxWorkQueueSize = 256;
 constexpr int MaxMoveStackSize = 1024 * 8;
-constexpr int NumWorkerThreads = 8;
 constexpr int MinWorkItemDepth = 4;
 
-WorkQueue* workQueue[NumWorkerThreads];
+int numWorkerThreads = 0;
+WorkQueue* workQueue[MaxWorkerThreads];
 RunState runState;
-Move* threadLocalStack[NumWorkerThreads];
-std::thread* worker[NumWorkerThreads];
+Move* threadLocalStack[MaxWorkerThreads];
+std::thread* worker[MaxWorkerThreads];
 
 void worker_loop(int threadIndex)
 {
     std::mt19937 gen(0x12345678 + threadIndex);
-    std::uniform_int_distribution<int> dist(0, NumWorkerThreads - 2);
+    std::uniform_int_distribution<int> dist(0, (numWorkerThreads > 1) ? numWorkerThreads - 2 : 0);
 
     while (runState != RunState::Exiting)
     {
@@ -41,9 +41,9 @@ void worker_loop(int threadIndex)
             item.result->count += perftMultithreaded(item.pos, item.depth, threadLocalStack[threadIndex], threadIndex);
             item.result->workLeft--;
         }
-        else
+        else if (numWorkerThreads > 1)
         {
-
+            // Steal from a random other worker
             int stealIndex = dist(gen);
             if (stealIndex >= threadIndex) stealIndex++;
 
@@ -53,10 +53,13 @@ void worker_loop(int threadIndex)
                 item.result->workLeft--;
             }
             else
-
             {
                 std::this_thread::yield();
             }
+        }
+        else
+        {
+            std::this_thread::yield();
         }
     }
 }
@@ -158,10 +161,13 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
     }
 }
 
-void initMultiPerft()
+void initMultiPerft(int numWorkers)
 {
+    assert(numWorkers >= 1 && numWorkers <= MaxWorkerThreads);
+    numWorkerThreads = numWorkers;
+
     runState = RunState::Initializing;
-    for (int i = 0; i < NumWorkerThreads; i++)
+    for (int i = 0; i < numWorkerThreads; i++)
     {
         threadLocalStack[i] = new Move[MaxMoveStackSize];
         workQueue[i] = new WorkQueue(MaxWorkQueueSize);
@@ -189,7 +195,7 @@ uint64_t runMultiPerft(const Position& pos, int depth)
 void releaseMultiPerft()
 {
     runState = RunState::Exiting;
-    for (int i = 0; i < NumWorkerThreads; i++)
+    for (int i = 0; i < numWorkerThreads; i++)
     {
         worker[i]->join();
         delete worker[i];

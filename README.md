@@ -16,7 +16,7 @@ Where supported options include:
 
   `-h <size>` Hash table size as an exponent of 2. E.g. -h 20 gives 2<sup>20</sup> = 1 048 576 hash table entries. The default is 26. Has an effect only when the hash table is enabled at compile time (see Configuration).
   
-  `-w <workers>` Number of worker threads. Currently ignored: multithreading is disabled at compile time, and the number of threads is fixed to 8 in `Perft.cpp`.
+  `-w <workers>` Number of worker threads, from 1 to 64. The default is 8. Has an effect only when multithreading is enabled at compile time (see Configuration).
   
   `-s` Print extra stats about moves and hash table. Currently ignored: the stats are enabled at compile time with `COLLECT_STATS`.
 
@@ -30,7 +30,7 @@ The code is written for Visual Studio (MSVC) on x64 Windows, and it uses MSVC in
 
 The features are selected at compile time in `Config.hpp`:
 
-  `MULTITHREADED` Use multiple worker threads. Disabled by default. The number of threads is set by `NumWorkerThreads` in `Perft.cpp`.
+  `MULTITHREADED` Use multiple worker threads. Disabled by default. The number of threads is set with the `-w` option.
 
   `LEAF_NODE_BULK_COUNT` Count the moves at the second to last level instead of making them (see Design). Enabled by default.
 
