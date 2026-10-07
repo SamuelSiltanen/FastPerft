@@ -16,7 +16,7 @@ Where supported options include:
 
   `-h <size>` Hash table size as an exponent of 2. E.g. -h 20 gives 2<sup>20</sup> = 1 048 576 hash table entries. The default is 26. Has an effect only when the hash table is enabled at compile time (see Configuration).
   
-  `-w <workers>` Number of worker threads, from 1 to 64. The default is 8. Has an effect only when multithreading is enabled at compile time (see Configuration).
+  `-w <workers>` Number of worker threads, from 1 to 64. The default is 8. Use `-w 1` to measure single-threaded performance.
   
   `-s` Print extra stats about moves and hash table. Currently ignored: the stats are enabled at compile time with `COLLECT_STATS`.
 
@@ -30,7 +30,7 @@ The code is written for Visual Studio (MSVC) on x64 Windows, and it uses MSVC in
 
 The features are selected at compile time in `Config.hpp`:
 
-  `MULTITHREADED` Use multiple worker threads. Disabled by default. The number of threads is set with the `-w` option.
+  `MULTITHREADED` Use multiple worker threads. Enabled by default. The number of threads is set with the `-w` option. When disabled, the search runs in the main thread and `-w` is ignored.
 
   `LEAF_NODE_BULK_COUNT` Count the moves at the second to last level instead of making them (see Design). Enabled by default.
 
@@ -97,7 +97,7 @@ The multithreading uses a simple work stealing approach. Each worker pushes the 
 
 There could be a potential dead lock, where workers pick up each others' work, and then wait for each other to finish. To avoid this, the worker that pushes the branches in the work queue, must keep on working on those branches, and if it finishes so that there is no work left in the queue, but other workers are still processing the branches that were previously in the work queue, it must wait. This can cause some idling, but typically, this is a short time.
 
-The multithreading is disabled by default (see Configuration). Every level deeper than 4 (`MinWorkItemDepth`) pushes all its moves to the work queue on top of the levels above it, so deep searches need more queue space. Each work queue starts with room for 256 items and doubles its capacity when it is full. The queue uses logical front and back indices that are never wrapped around, so the markers that tell the workers which items they pushed stay valid when the queue grows.
+The multithreading is enabled by default (see Configuration). Every level deeper than 4 (`MinWorkItemDepth`) pushes all its moves to the work queue on top of the levels above it, so deep searches need more queue space. Each work queue starts with room for 256 items and doubles its capacity when it is full. The queue uses logical front and back indices that are never wrapped around, so the markers that tell the workers which items they pushed stay valid when the queue grows.
 
 ### Hash Table
 
