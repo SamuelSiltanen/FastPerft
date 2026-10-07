@@ -24,7 +24,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
 #endif
 
 #if HASH_TABLE
-    if (depth >= MinHashDepth) // Don't probe at last levels, because memory access is slower than calculation
+    if (hashTable && depth >= MinHashDepth) // Don't probe at last levels, because memory access is slower than calculation
     {
         uint64_t entry = hashTable->find(pos, depth);
 #if COLLECT_STATS
@@ -72,7 +72,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         }
 
 #if HASH_TABLE
-        if (1 >= MinHashDepth)
+        if (hashTable && 1 >= MinHashDepth)
         {
 #if COLLECT_STATS
             statsHashWriteTries++;
@@ -119,7 +119,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         }
 
 #if HASH_TABLE
-        if (depth >= MinHashDepth)
+        if (hashTable && depth >= MinHashDepth)
         {
 #if COLLECT_STATS
             statsHashWriteTries++;

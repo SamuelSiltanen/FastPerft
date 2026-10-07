@@ -43,7 +43,12 @@ int main(int argc, char** argv)
     PerftParams params = parseCommandLine(argc, argv);
 
 #if HASH_TABLE
-    hashTable = new HashTable(params.hashTableSize);
+    // The hash keys are kept up to date in make even if the hash table is disabled
+    HashTable::initHashKeys();
+    if (params.hashTableSize >= 0)
+    {
+        hashTable = new HashTable(params.hashTableSize);
+    }
 
     params.position.hash = HashTable::calcHash(params.position);
 #endif
@@ -99,6 +104,14 @@ PerftParams parseCommandLine(int argc, char** argv)
                 break;
             }
             params.hashTableSize = atoi(argv[i + 1]);
+#if HASH_TABLE
+            // Negative disables the hash table. The table needs at least one cache line (4 entries).
+            if (params.hashTableSize >= 0 && (params.hashTableSize < MinHashTableSize || params.hashTableSize > MaxHashTableSize))
+            {
+                failure = true;
+                break;
+            }
+#endif
             ++i;
             break;
         case 'w':
@@ -154,9 +167,9 @@ void printUsage()
     printf("\tfastperft.exe <options>\n");
     printf("Supported options:\n");
     printf("\t-d <depth>      Depth at which to calculate leaf nodes. Default is 1.\n");
-    printf("\t-h <size>       Hash table size as an exponent of 2.\n");
-    printf("\t                E.g. -h 20 gives 2 ^ 20 = 1048576 hash table entries.\n");
-    printf("\t                Default is 26. Negative value disables hash table.\n");
+    printf("\t-h <size>       Hash table size as an exponent of 2 (2-30), 16 bytes per entry.\n");
+    printf("\t                E.g. -h 20 gives 2 ^ 20 = 1048576 hash table entries (16 MB).\n");
+    printf("\t                Default is 26 (1 GB). Negative value disables hash table.\n");
     printf("\t-w <workers>    Number of worker threads (1-64). Default is 8.\n");
     printf("\t                Used only when compiled with MULTITHREADED.\n");
     printf("\t-s              Print extra stats about moves and hash table.\n");

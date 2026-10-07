@@ -14,7 +14,7 @@ Where supported options include:
   
   `-f "<FEN>"` Position in Forsyth-Edwards notation (FEN, see. https://en.wikipedia.org/wiki/Forsyth%E2%80%93Edwards_Notation). This is supported by many chess GUIs and websites. Remember to use the quotes. The default is the initial position.
 
-  `-h <size>` Hash table size as an exponent of 2. E.g. -h 20 gives 2<sup>20</sup> = 1 048 576 hash table entries. The default is 26. Has an effect only when the hash table is enabled at compile time (see Configuration).
+  `-h <size>` Hash table size as an exponent of 2, from 2 to 30. Each entry takes 16 bytes, so e.g. -h 20 gives 2<sup>20</sup> = 1 048 576 entries (16 MB). The default is 26 (1 GB). A negative value disables the hash table.
   
   `-w <workers>` Number of worker threads, from 1 to 64. The default is 8. Use `-w 1` to measure single-threaded performance.
   
@@ -34,7 +34,7 @@ The features are selected at compile time in `Config.hpp`:
 
   `LEAF_NODE_BULK_COUNT` Count the moves at the second to last level instead of making them (see Design). Enabled by default.
 
-  `HASH_TABLE` Store node counts of subtrees in a hash table. Disabled by default.
+  `HASH_TABLE` Store node counts of subtrees in a hash table. Enabled by default. Note that when enabled, the moves are made with a version of `make` that also updates the hash key, and it is slower than the version used without the hash table. So with `-h -1`, the speed is about 10 % lower than when compiled without the hash table.
 
   `COLLECT_STATS` Collect stats about captures, en passants, castlings, checkmates, and hash table use. Disabled by default.
 
@@ -42,15 +42,15 @@ The sliding piece attack lookup method is selected at the top of `MoveGeneration
 
 ## Performance
 
-Without the hash table, on an Intel Core i7-9700K (8 cores, no hyper-threading), best of two runs:
+On an Intel Core i7-9700K (8 cores, no hyper-threading). The times don't include allocating and clearing the hash table, which takes about 0.2 s for the default size of 1 GB.
 
-| Position | Depth | Nodes | 1 thread (`-w 1`) | 8 threads (default) | Speedup |
-|---|---|---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 4.29 s (745 Mnps) | 0.58 s (5.5 Gnps) | 7.4x |
-| Initial position | 8 | 84 998 978 956 | 115.6 s (735 Mnps) | 15.8 s (5.4 Gnps) | 7.3x |
-| Kiwipete | 6 | 8 031 647 685 | 6.89 s (1165 Mnps) | 0.94 s (8.6 Gnps) | 7.4x |
+| Position | Depth | Nodes | 1 thread, no hash table | 8 threads, no hash table | 1 thread, hash table | 8 threads, hash table (default) |
+|---|---|---|---|---|---|---|
+| Initial position | 7 | 3 195 901 860 | 4.9 s | 0.68 s | 1.6 s | 0.22 s |
+| Initial position | 8 | 84 998 978 956 | | 17.9 s | | 2.7 s |
+| Kiwipete | 6 | 8 031 647 685 | 7.9 s | 1.06 s | 3.0 s | 0.40 s |
 
-The multithreading scales almost linearly with the number of cores. Kiwipete at depth 6:
+The multithreading scales almost linearly with the number of cores. Kiwipete at depth 6, compiled without the hash table:
 
 | Threads | Time | Speedup |
 |---|---|---|
@@ -59,11 +59,11 @@ The multithreading scales almost linearly with the number of cores. Kiwipete at 
 | 4 | 1.83 s | 3.8x |
 | 8 | 0.94 s | 7.4x |
 
-The speed depends on the position: positions with many moves per node are faster per node, because the leaf nodes are counted in bulk.
+The speed depends on the position: positions with many moves per node are faster per node, because the leaf nodes are counted in bulk. The hash table helps more at deeper depths, where more positions are reached through different move orders.
 
 ## Tests
 
-The tests are in a separate Google Test project, `Test_FastPerft`, which the solution expects in a sibling folder (`..\Test_FastPerft`). Besides unit tests for the FEN parser and parts of the move generation, it contains perft tests for the six positions in https://www.chessprogramming.org/Perft_Results. Their depths are chosen so that each test takes up to roughly 10 seconds in a Release build, so they catch most regressions when optimizing the move generator. Run the tests in a Release build, because a Debug build is far slower.
+The tests are in a separate Google Test project, `Test_FastPerft`, which the solution expects in a sibling folder (`..\Test_FastPerft`). Besides unit tests for the FEN parser and parts of the move generation, it contains perft tests for the six positions in https://www.chessprogramming.org/Perft_Results, both without and with a hash table. Their depths are chosen so that each test takes up to roughly 10 seconds in a Release build, so they catch most regressions when optimizing the move generator. Run the tests in a Release build, because a Debug build is far slower.
 
 ## Design
 
@@ -91,7 +91,7 @@ The protection area (all squares attacked by the opponent) is computed for each 
 
 When the king is in check by a single piece, the other pieces can only capture the checker or block the check. These moves are generated with a target mask, which contains the checker and the squares between it and the king. The squares in between are where the attacks of the king and the checker intersect. Pinned pieces cannot resolve a check, so they are skipped. When in double check, only king moves are possible.
 
-Making a move copies the position and updates it. The piece bitboards are updated with AVX2 instructions using a table that tells which bitboards each piece type occupies, and castling rights are updated with per-square masks, so that only the special moves (en passant, double pawn moves, promotions, and castling) need branches.
+Making a move copies the position and updates it. Without the hash table, the piece bitboards are updated with AVX2 instructions using a table that tells which bitboards each piece type occupies, and castling rights are updated with per-square masks, so that only the special moves (en passant, double pawn moves, promotions, and castling) need branches. With the hash table, a separate version of `make` also updates the hash key incrementally.
 
 ### Performance Notes
 
@@ -111,4 +111,6 @@ The multithreading is enabled by default (see Configuration). Every level deeper
 
 ### Hash Table
 
-The hash table uses Zobrist hashing (https://www.chessprogramming.org/Zobrist_Hashing) for generating and keeping up to date 64-bit hash keys. Those are then mapped into a hash table, where each entry stores the hash key, depth, and node count. The hash table utilizes the fact that the entries are updated cache line at a time. If a collision occurs, it may use any of the other entry slots on the same cache line. If all of the slots are taken, it replaces the one with the lowest node count. With multiple threads, the entries are updated with atomic compare-and-swap operations instead of locks. A lost update only affects the performance, not the results.
+The hash table uses Zobrist hashing (https://www.chessprogramming.org/Zobrist_Hashing) for generating and keeping up to date 64-bit hash keys. Those are then mapped into a hash table, where each entry stores the hash key, depth, and node count. The hash table utilizes the fact that the entries are updated cache line at a time. If a collision occurs, it may use any of the other entry slots on the same cache line. If all of the slots are taken, it replaces the one with the lowest node count. The hash table is not used at the last levels (`MinHashDepth`), because there, the memory access is slower than counting the moves.
+
+The hash table is shared by all threads without locks, using lockless hashing (https://www.chessprogramming.org/Shared_Hash_Table#Lockless). Each entry is two 64-bit words, the data (depth and node count) and the key XORed with the data. They are written and read separately, so a thread can read an entry while another thread is writing it, and get the key from one entry and the data from another. Then the key XORed with the data doesn't match the probed hash key, so the torn entry is ignored instead of giving a wrong node count. A lost or ignored entry only affects the performance, not the results. (A `std::atomic` of the whole 16-byte entry is not lock-free with MSVC, and it uses 32 bytes per entry.)

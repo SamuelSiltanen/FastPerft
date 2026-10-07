@@ -26,21 +26,15 @@ bool HashEntry::posEqual(const Position& pos)
 HashTable::Hashes HashTable::hashKeys[64];
 bool HashTable::hashesReady = false;
 
+static_assert(sizeof(std::atomic<uint64_t>) == sizeof(uint64_t), "64-bit atomics must have no overhead");
+
 HashTable::HashTable(uint32_t sizeExp)
     : m_size(1 << sizeExp)
     , m_sizeExp(sizeExp)
 {
-#if MULTITHREADED
-    m_hashTable = (std::atomic<HashEntry>*)_aligned_malloc(m_size * sizeof(std::atomic<HashEntry>), 64);
-#else
-    m_hashTable = (HashEntry*)_aligned_malloc(m_size * sizeof(HashEntry), 64);
-#endif
+    m_hashTable = (HashSlot*)_aligned_malloc(m_size * sizeof(HashSlot), 64);
     clear();
-    if (!hashesReady)
-    {
-        initHashes();
-        hashesReady = true;
-    }
+    initHashKeys();
 }
 
 HashTable::~HashTable()
@@ -59,7 +53,7 @@ HashTable::~HashTable()
             fprintf(f, "Index,Elements\n");
             for (size_t i = 0; i < m_size; ++i)
             {
-                fprintf(f, "%d,%d\n", i, m_hashTable[i].empty() ? 0 : 1);
+                fprintf(f, "%d,%d\n", i, read(static_cast<uint32_t>(i)).empty() ? 0 : 1);
             }
 
             fclose(f);
@@ -70,30 +64,53 @@ HashTable::~HashTable()
     }
 }
 
-// Insert an entry to the hash table. The weakest form of atomicity is sufficient for us,
-// because the "wrong" thread writing the result only affects the performance, but not
-// the validity of the results. The collisions are so rare that it doesn't make sense
-// to optimize for them, but to make the common case as fast as possible.
+HashEntry HashTable::read(uint32_t index) const
+{
+    const HashSlot& slot = m_hashTable[index];
+
+    HashEntry entry;
+    entry.depth_and_count = slot.data.load(std::memory_order_relaxed);
+    entry.hash = slot.key.load(std::memory_order_relaxed) ^ entry.depth_and_count;
+#ifdef HASH_DEBUG
+    entry.bqr = slot.bqr;
+    entry.rkn = slot.rkn;
+    entry.npb = slot.npb;
+    entry.w = slot.w;
+    entry.state = slot.state;
+#endif
+    return entry;
+}
+
+void HashTable::write(uint32_t index, const HashEntry& entry)
+{
+    HashSlot& slot = m_hashTable[index];
+
+    slot.key.store(entry.hash ^ entry.depth_and_count, std::memory_order_relaxed);
+    slot.data.store(entry.depth_and_count, std::memory_order_relaxed);
+#ifdef HASH_DEBUG
+    slot.bqr = entry.bqr;
+    slot.rkn = entry.rkn;
+    slot.npb = entry.npb;
+    slot.w = entry.w;
+    slot.state = entry.state;
+#endif
+}
+
+// Insert an entry to the hash table. Another thread may overwrite the entry at the same time,
+// but that only affects the performance, not the validity of the results, because torn entries
+// don't match in find. The collisions are so rare that it doesn't make sense to optimize for them,
+// but to make the common case as fast as possible.
 bool HashTable::insert(const HashEntry& entry)
 {
     uint32_t index = mapToIndex(entry.hash);
 
-#if MULTITHREADED
-    HashEntry tableEntry = m_hashTable[index].load(std::memory_order_relaxed);
-#else
-    HashEntry tableEntry = m_hashTable[index];
-#endif
+    HashEntry tableEntry = read(index);
 
     if (tableEntry.empty() ||
         (tableEntry.hash == entry.hash && tableEntry.depth() == entry.depth()))
     {
-#if MULTITHREADED
-        // Allows spurious failures
-        return m_hashTable[index].compare_exchange_weak(tableEntry, entry, std::memory_order_relaxed);
-#else
-        m_hashTable[index] = entry;
+        write(index, entry);
         return true;
-#endif
     }
     else
     {
@@ -101,23 +118,13 @@ bool HashTable::insert(const HashEntry& entry)
 
         int bestReplacement = -1;
         int64_t bestScore = 0;
-#if MULTITHREADED
-        HashEntry bestEntry;
-#endif
         for (int i = 0; i < 4; ++i)
         {
-#if MULTITHREADED
-            tableEntry = m_hashTable[cacheLineStartIndex + i].load(std::memory_order_relaxed);
-#else
-            tableEntry = m_hashTable[cacheLineStartIndex + i];
-#endif
+            tableEntry = read(cacheLineStartIndex + i);
 
             if (tableEntry.empty()) // First try empty slots
             {
                 bestReplacement = i;
-#if MULTITHREADED
-                bestEntry = tableEntry;
-#endif
                 break;
             }
             else // Then calculate replacement score
@@ -127,20 +134,13 @@ bool HashTable::insert(const HashEntry& entry)
                 {
                     bestReplacement = i;
                     bestScore = score;
-#if MULTITHREADED
-                    bestEntry = tableEntry;
-#endif
                 }
             }
         }
 
         if (bestReplacement >= 0)
         {
-#if MULTITHREADED
-            m_hashTable[cacheLineStartIndex + bestReplacement].compare_exchange_weak(bestEntry, entry, std::memory_order_relaxed);
-#else
-            m_hashTable[cacheLineStartIndex + bestReplacement] = entry;
-#endif
+            write(cacheLineStartIndex + bestReplacement, entry);
             return true;
         }
     }
@@ -155,20 +155,16 @@ uint64_t HashTable::find(const Position& pos, uint16_t depth)
 
     for (int i = 0; i < 4; ++i)
     {
-#if MULTITHREADED
-        HashEntry entry = m_hashTable[cacheLineStartIndex + i].load(std::memory_order_relaxed);
-#else
-        HashEntry entry = m_hashTable[cacheLineStartIndex + i];
-#endif
+        HashEntry entry = read(cacheLineStartIndex + i);
 
         if (entry.hash == pos.hash && entry.depth() == depth)
         {
             uint64_t count = entry.count();
 
 #ifdef HASH_DEBUG
-            if (!m_hashTable[cacheLineStartIndex + i].posEqual(pos))
+            if (!entry.posEqual(pos))
             {
-                const HashEntry& e = m_hashTable[cacheLineStartIndex + i];
+                const HashEntry& e = entry;
                 printf("Hashes match (%016llx), but positions differ!\n", pos.hash);
                 printf("Hash table position:\n");
                 printf("p: %016llx\n", e.npb & ~e.rkn & ~e.bqr);
@@ -199,7 +195,7 @@ uint64_t HashTable::find(const Position& pos, uint16_t depth)
 
 void HashTable::clear()
 {
-    memset(m_hashTable, 0, m_size * sizeof(HashEntry));
+    memset(m_hashTable, 0, m_size * sizeof(HashSlot));
 }
 
 uint32_t HashTable::mapToIndex(uint64_t hash)
@@ -306,8 +302,11 @@ uint64_t HashTable::hashEP(uint64_t oldState, uint64_t newState)
     return hash;
 }
 
-void HashTable::initHashes()
+// Initializes the Zobrist keys. Safe to call more than once.
+void HashTable::initHashKeys()
 {
+    if (hashesReady) return;
+
     std::mt19937_64 generator(0xacdcabba);
 
     for (int i = 0; i < 64; ++i)
@@ -321,4 +320,6 @@ void HashTable::initHashes()
         hashKeys[i].w = generator();
         hashKeys[i].state = generator();
     }
+
+    hashesReady = true;
 }

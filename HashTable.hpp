@@ -7,9 +7,7 @@
 #include "Config.hpp"
 
 #include <cassert>
-#if MULTITHREADED
 #include <atomic>
-#endif
 
 //#define HASH_DEBUG
 
@@ -66,9 +64,34 @@ struct alignas(16) HashEntry
 #endif
 };
 
+// A slot in the hash table. The key is stored XORed with the data, so that a slot that is read
+// while another thread writes it (and thus has the key and data from different entries) does not
+// match the probed hash. This makes the table thread safe without locks (lockless hashing).
+#ifdef HASH_DEBUG
+struct alignas(64) HashSlot
+#else
+struct alignas(16) HashSlot
+#endif
+{
+    std::atomic<uint64_t> key;
+    std::atomic<uint64_t> data;
+
+#ifdef HASH_DEBUG
+    // Not thread safe, for single-threaded debugging only
+    uint64_t bqr;
+    uint64_t rkn;
+    uint64_t npb;
+    uint64_t w;
+    uint64_t state;
+    uint64_t padding;
+#endif
+};
+
 constexpr uint64_t InvalidHashTableEntry = 0xffffffffffffffffULL;
 constexpr int MinHashDepth = 2;
 constexpr uint32_t DefaultHashTableSize = 26;
+constexpr int MinHashTableSize = 2;
+constexpr int MaxHashTableSize = 30;
 
 class HashTable
 {
@@ -97,6 +120,7 @@ public:
         uint64_t state;
     };
 
+    static void initHashKeys();
     static uint64_t calcHash(const Position& pos);
     static const Hashes& hashSquare(unsigned long sq) { assert(hashesReady); return hashKeys[sq]; }
     static uint64_t hashTurn() { assert(hashesReady); return hashKeys[0].state; }
@@ -106,13 +130,10 @@ private:
     uint32_t mapToIndex(uint64_t hash);
     int64_t replacementPolicy(const HashEntry& currentEntry, const HashEntry& candidateEntry);
 
-    void initHashes();
+    HashEntry read(uint32_t index) const;
+    void write(uint32_t index, const HashEntry& entry);
 
-#if MULTITHREADED
-    std::atomic<HashEntry>* m_hashTable;
-#else
-    HashEntry* m_hashTable;
-#endif
+    HashSlot* m_hashTable;
     uint32_t m_size;
     uint32_t m_sizeExp;
     

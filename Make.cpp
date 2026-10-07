@@ -260,7 +260,7 @@ Position make(const Position& pos, const Move& move)
                     mov = (1ULL << (EPSquare + 8));
                     next.p ^= mov;
 #if HASH_TABLE
-                    next.hash ^= HashTable::hashSquare(EPSquare + 8).p;
+                    next.hash ^= HashTable::hashSquare(static_cast<unsigned long>(EPSquare + 8)).p;
 #endif
 #if COLLECT_STATS
                     statsCaptures++;
@@ -273,8 +273,8 @@ Position make(const Position& pos, const Move& move)
                     next.p ^= mov;
                     next.w ^= mov;
 #if HASH_TABLE
-                    next.hash ^= HashTable::hashSquare(EPSquare - 8).p;
-                    next.hash ^= HashTable::hashSquare(EPSquare - 8).w;
+                    next.hash ^= HashTable::hashSquare(static_cast<unsigned long>(EPSquare - 8)).p;
+                    next.hash ^= HashTable::hashSquare(static_cast<unsigned long>(EPSquare - 8)).w;
 #endif
 #if COLLECT_STATS
                     statsCaptures++;
@@ -384,8 +384,8 @@ Position make(const Position& pos, const Move& move)
                 next.rq ^= mov;
                 next.w ^= mov;
 #if HASH_TABLE
-                next.hash ^= (HashTable::hashSquare(63).r | HashTable::hashSquare(61).r);
-                next.hash ^= (HashTable::hashSquare(63).w | HashTable::hashSquare(61).w);
+                next.hash ^= (HashTable::hashSquare(63).r ^ HashTable::hashSquare(61).r);
+                next.hash ^= (HashTable::hashSquare(63).w ^ HashTable::hashSquare(61).w);
 #endif
 #if COLLECT_STATS
                 statsCastles++;
@@ -397,8 +397,8 @@ Position make(const Position& pos, const Move& move)
                 next.rq ^= mov;
                 next.w ^= mov;
 #if HASH_TABLE
-                next.hash ^= (HashTable::hashSquare(56).r | HashTable::hashSquare(59).r);
-                next.hash ^= (HashTable::hashSquare(56).w | HashTable::hashSquare(59).w);
+                next.hash ^= (HashTable::hashSquare(56).r ^ HashTable::hashSquare(59).r);
+                next.hash ^= (HashTable::hashSquare(56).w ^ HashTable::hashSquare(59).w);
 #endif
 #if COLLECT_STATS
                 statsCastles++;
@@ -412,7 +412,7 @@ Position make(const Position& pos, const Move& move)
                 mov = 0x00000000000000a0ULL;
                 next.rq ^= mov;
 #if HASH_TABLE
-                next.hash ^= (HashTable::hashSquare(7).r | HashTable::hashSquare(5).r);
+                next.hash ^= (HashTable::hashSquare(7).r ^ HashTable::hashSquare(5).r);
 #endif
 #if COLLECT_STATS
                 statsCastles++;
@@ -423,7 +423,7 @@ Position make(const Position& pos, const Move& move)
                 mov = 0x0000000000000009ULL;
                 next.rq ^= mov;
 #if HASH_TABLE
-                next.hash ^= (HashTable::hashSquare(0).r | HashTable::hashSquare(3).r);
+                next.hash ^= (HashTable::hashSquare(0).r ^ HashTable::hashSquare(3).r);
 #endif
 #if COLLECT_STATS
                 statsCastles++;
