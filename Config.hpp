@@ -6,5 +6,4 @@
 #define MULTITHREADED 1
 #define LEAF_NODE_BULK_COUNT 1
 #define HASH_TABLE 1 
-#define COLLECT_STATS 0
 

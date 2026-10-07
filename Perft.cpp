@@ -82,12 +82,6 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
     if (checkers)
     {
         stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, pins);
-        if (stack == stack0)
-        {
-#if COLLECT_STATS
-            statsCheckmates++;
-#endif
-        }
     }
     else
     {

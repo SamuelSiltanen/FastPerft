@@ -2,63 +2,172 @@
 // Stats.cpp
 
 #include "Stats.hpp"
+#include "Make.hpp"
+#include "MoveGeneration.hpp"
 
-#if COLLECT_STATS
-
-#include <cstdio>
+#include <atomic>
 #include <cinttypes>
+#include <cstdio>
+#include <thread>
+#include <vector>
 
-#if HASH_TABLE
-#include "HashTable.hpp"
-#endif
+constexpr int StatsMoveStackSize = 1024 * 8;
 
-std::atomic<int> statsCaptures = 0;
-std::atomic<int> statsEPs = 0;
-std::atomic<int> statsCastles = 0;
-std::atomic<int> statsCheckmates = 0;
-std::atomic<int> statsHashProbes = 0;
-std::atomic<int> statsHashHits = 0;
-std::atomic<int> statsHashWriteTries = 0;
-std::atomic<int> statsHashWrites = 0;
-
-void resetStats()
+PerftStats& PerftStats::operator+=(const PerftStats& other)
 {
-    statsCaptures = 0;
-    statsEPs = 0;
-    statsCastles = 0;
-    statsCheckmates = 0;
-    statsHashProbes = 0;
-    statsHashHits = 0;
-    statsHashWriteTries = 0;
-    statsHashWrites = 0;
+    nodes += other.nodes;
+    captures += other.captures;
+    enPassants += other.enPassants;
+    castles += other.castles;
+    promotions += other.promotions;
+    checks += other.checks;
+    discoveryChecks += other.discoveryChecks;
+    doubleChecks += other.doubleChecks;
+    checkmates += other.checkmates;
+    return *this;
 }
 
-void printStats(uint64_t count)
+template<Color C>
+static Move* generateMoves(const Position& pos, Move* stack)
 {
-    int sCaps = statsCaptures;
-    int sEPs = statsEPs;
-    int sCsls = statsCastles;
-    int sChks = statsCheckmates;
-    int sHPrs = statsHashProbes;
-    int sHHts = statsHashHits;
-    int sHWts = statsHashWriteTries;
-    int sHWrs = statsHashWrites;
-    printf("Node count = %" PRIu64 " Captures = %d EPs = %d Castles = %d Checkmates = %d"
-#if HASH_TABLE
-        " Hash probes = %d Hash hits = %d Hash write tries = %d Hash writes = %d"
-#endif
-        "\n",
-        count, sCaps, sEPs, sCsls, sChks
-#if HASH_TABLE
-        , sHPrs, sHHts, sHWts, sHWrs
-#endif
-    );
-#if HASH_TABLE
-    float hashTableHitRate = (float)statsHashHits / (float)statsHashProbes;
-    float hashCollisionRate = (float)(statsHashWriteTries - statsHashWrites) / (float)(statsHashWriteTries);
-    printf("Hash table size %dk elements, read hit rate %f %%, write collision rate %f %%\n",
-        1 << (HashTableSize - 10), hashTableHitRate * 100.0f, hashCollisionRate * 100.0f);
-#endif
+    uint64_t occ = pos.p | pos.n | pos.bq | pos.rq | pos.k;
+
+    Pins pins;
+    uint64_t checkers = findPinsAndCheckers<C>(pos, occ, pins);
+    uint64_t pArea = findProtectionArea<C>(pos, occ);
+
+    if (checkers)
+    {
+        return generateEvasions<C>(pos, stack, occ, pArea, checkers, pins);
+    }
+
+    stack = generateP<C>(pos, stack, occ, pins);
+    stack = generateN<C>(pos, stack, occ, pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE);
+    stack = generateSliders<C>(pos, stack, occ, pins);
+    stack = generateK<C>(pos, stack, occ, pArea);
+    stack = generateCastling<C>(pos, stack, occ, pArea);
+    return stack;
 }
 
-#endif
+// Classifies a leaf move made by C
+template<Color C>
+static void addLeafStats(const Position& pos, const Move& move, PerftStats& stats)
+{
+    constexpr Color Opponent = (C == White) ? Black : White;
+
+    unsigned long src = move.src();
+    unsigned long dst = move.dst();
+    uint64_t occ = pos.p | pos.n | pos.bq | pos.rq | pos.k;
+
+    bool enPassant = move.piece() == Pawn && (pos.state & EPValid) && dst == ((pos.state >> 5) & 63);
+    int distance = static_cast<int>(dst) - static_cast<int>(src);
+    bool castling = move.piece() == King && (distance == 2 || distance == -2);
+
+    stats.nodes++;
+    if ((occ & (1ULL << dst)) || enPassant) stats.captures++;
+    if (enPassant) stats.enPassants++;
+    if (castling) stats.castles++;
+    if (move.prom() != None) stats.promotions++;
+
+    Position next = make<C>(pos, move);
+    uint64_t nextOcc = next.p | next.n | next.bq | next.rq | next.k;
+    Pins pins;
+    uint64_t checkers = findPinsAndCheckers<Opponent>(next, nextOcc, pins);
+    if (checkers)
+    {
+        stats.checks++;
+
+        // Discovered check: a piece other than the moved one gives check. Double checks are counted
+        // separately, and a check by the rook in castling is not counted as discovered.
+        if (checkers & (checkers - 1)) stats.doubleChecks++;
+        else if ((checkers & ~(1ULL << dst)) && !castling) stats.discoveryChecks++;
+
+        uint64_t pArea = findProtectionArea<Opponent>(next, nextOcc);
+        if (countEvasions<Opponent>(next, nextOcc, pArea, checkers, pins) == 0) stats.checkmates++;
+    }
+}
+
+template<Color C>
+static void searchStats(const Position& pos, int depth, Move* stack, PerftStats& stats)
+{
+    constexpr Color Opponent = (C == White) ? Black : White;
+
+    Move* end = generateMoves<C>(pos, stack);
+
+    for (Move* move = stack; move < end; ++move)
+    {
+        if (depth == 1)
+        {
+            addLeafStats<C>(pos, *move, stats);
+        }
+        else
+        {
+            searchStats<Opponent>(make<C>(pos, *move), depth - 1, end, stats);
+        }
+    }
+}
+
+template<Color C>
+static PerftStats perftStatsRoot(const Position& pos, int depth, int numWorkers)
+{
+    PerftStats total;
+    if (depth <= 0)
+    {
+        total.nodes = 1;
+        return total;
+    }
+
+    std::vector<Move> rootMoves(StatsMoveStackSize);
+    Move* end = generateMoves<C>(pos, rootMoves.data());
+    size_t numMoves = end - rootMoves.data();
+
+    if (depth == 1)
+    {
+        for (size_t i = 0; i < numMoves; ++i) addLeafStats<C>(pos, rootMoves[i], total);
+        return total;
+    }
+
+    // Each worker takes the next root move until all have been searched
+    size_t numThreads = (numWorkers < 1) ? 1 : static_cast<size_t>(numWorkers);
+    if (numThreads > numMoves) numThreads = (numMoves > 0) ? numMoves : 1;
+
+    std::atomic<size_t> nextMove(0);
+    std::vector<PerftStats> threadStats(numThreads);
+    std::vector<std::thread> threads;
+    for (size_t t = 0; t < numThreads; ++t)
+    {
+        threads.emplace_back([&, t]()
+        {
+            std::vector<Move> stack(StatsMoveStackSize);
+            for (size_t i = nextMove++; i < numMoves; i = nextMove++)
+            {
+                searchStats<(C == White) ? Black : White>(make<C>(pos, rootMoves[i]), depth - 1, stack.data(), threadStats[t]);
+            }
+        });
+    }
+
+    for (size_t t = 0; t < numThreads; ++t)
+    {
+        threads[t].join();
+        total += threadStats[t];
+    }
+
+    return total;
+}
+
+PerftStats perftStats(const Position& pos, int depth, int numWorkers)
+{
+    return (pos.state & TurnWhite) ? perftStatsRoot<White>(pos, depth, numWorkers) : perftStatsRoot<Black>(pos, depth, numWorkers);
+}
+
+void printStats(const PerftStats& stats)
+{
+    printf("Captures = %" PRIu64 "\n", stats.captures);
+    printf("E.p. = %" PRIu64 "\n", stats.enPassants);
+    printf("Castles = %" PRIu64 "\n", stats.castles);
+    printf("Promotions = %" PRIu64 "\n", stats.promotions);
+    printf("Checks = %" PRIu64 "\n", stats.checks);
+    printf("Discovery checks = %" PRIu64 "\n", stats.discoveryChecks);
+    printf("Double checks = %" PRIu64 "\n", stats.doubleChecks);
+    printf("Checkmates = %" PRIu64 "\n", stats.checkmates);
+}

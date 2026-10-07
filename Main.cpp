@@ -12,10 +12,7 @@
 #include "Perft.hpp"
 #include "TestPositions.hpp"
 #include "FENParser.hpp"
-
-#if COLLECT_STATS
 #include "Stats.hpp"
-#endif
 
 #if HASH_TABLE
 #include "HashTable.hpp"
@@ -36,7 +33,7 @@ struct PerftParams
 
 PerftParams parseCommandLine(int argc, char** argv);
 void printUsage();
-void testPerft(const Position& pos, int depth, int numberOfWorkers);
+void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats);
 
 int main(int argc, char** argv)
 {       
@@ -45,7 +42,7 @@ int main(int argc, char** argv)
 #if HASH_TABLE
     // The hash keys are kept up to date in make even if the hash table is disabled
     HashTable::initHashKeys();
-    if (params.hashTableSize >= 0)
+    if (params.hashTableSize >= 0 && !params.collectStats) // The stats search does not use the hash table
     {
         hashTable = new HashTable(params.hashTableSize);
     }
@@ -55,7 +52,7 @@ int main(int argc, char** argv)
 
     fillMoveTables();
     
-    testPerft(params.position, params.depth, params.numberOfWorkers);
+    testPerft(params.position, params.depth, params.numberOfWorkers, params.collectStats);
 
 #if HASH_TABLE
     delete hashTable;
@@ -171,42 +168,48 @@ void printUsage()
     printf("\t                E.g. -h 20 gives 2 ^ 20 = 1048576 hash table entries (16 MB).\n");
     printf("\t                Default is 26 (1 GB). Negative value disables hash table.\n");
     printf("\t-w <workers>    Number of worker threads (1-64). Default is 8.\n");
-    printf("\t                Used only when compiled with MULTITHREADED.\n");
-    printf("\t-s              Print extra stats about moves and hash table.\n");
+    printf("\t-s              Print stats of the leaf nodes: captures, en passants, castles,\n");
+    printf("\t                promotions, checks, and checkmates. Slower, and without hash table.\n");
     printf("\t-f \"<FEN>\"    Position in FEN notation. Remember to use the quotes.\n");
 }
 
-void testPerft(const Position& pos, int depth, int numberOfWorkers)
+void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats)
 {
-#if COLLECT_STATS
-    resetStats();
-#endif
-
 #if MULTITHREADED
-    initMultiPerft(numberOfWorkers);
-#endif    
+    if (!collectStats) initMultiPerft(numberOfWorkers);
+#endif
 
     auto start = std::chrono::high_resolution_clock::now();
 
+    PerftStats stats;
+    uint64_t count = 0;
+    if (collectStats)
+    {
+        stats = perftStats(pos, depth, numberOfWorkers);
+        count = stats.nodes;
+    }
+    else
+    {
 #if MULTITHREADED
-    uint64_t count = runMultiPerft(pos, depth);
+        count = runMultiPerft(pos, depth);
 #else
-    Move stack[1024];
-    uint64_t count = pos.state & TurnWhite ? perft<White>(pos, depth, stack) : perft<Black>(pos, depth, stack);
+        Move stack[1024];
+        count = pos.state & TurnWhite ? perft<White>(pos, depth, stack) : perft<Black>(pos, depth, stack);
 #endif
+    }
 
     auto stop = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = stop - start;
 
     double nps = static_cast<double>(count) / elapsed.count() / 1e6;
 
-#if COLLECT_STATS
-    printStats(count);
-#else
     printf("Node count = %" PRIu64 " Time %.3f s Speed: %.3f Mnps\n", count, elapsed.count(), nps);
-#endif
+    if (collectStats)
+    {
+        printStats(stats);
+    }
 
 #if MULTITHREADED
-    releaseMultiPerft();
+    if (!collectStats) releaseMultiPerft();
 #endif
 }

@@ -3,9 +3,6 @@
 
 #include "Make.hpp"
 #include "Config.hpp"
-#if COLLECT_STATS
-#include "Stats.hpp"
-#endif
 #if HASH_TABLE
 #include "HashTable.hpp"
 #endif
@@ -72,14 +69,6 @@ __forceinline Position make(const Position& pos, const Move& move)
     uint64_t mov = src | dst;
     Piece piece = move.piece();
 
-#if HASH_TABLE || COLLECT_STATS
-    // Captured piece, if any. Kings are never captured.
-    uint64_t captured = (pos.p | pos.n | pos.bq | pos.rq) & dst;
-#endif
-#if COLLECT_STATS
-    if (captured) statsCaptures++;
-#endif
-
 #if HASH_TABLE
     // The hash key is needed only with a hash table. Without it, next.hash keeps the old, unused value.
     const bool updateHash = (hashTable != nullptr);
@@ -98,7 +87,8 @@ __forceinline Position make(const Position& pos, const Move& move)
         hash ^= srcKeys[piece - 1] ^ dstKeys[piece - 1];
         if (C == White) hash ^= srcKeys[WhiteKey] ^ dstKeys[WhiteKey];
 
-        if (captured)
+        // Captured piece, if any. Kings are never captured.
+        if ((pos.p | pos.n | pos.bq | pos.rq) & dst)
         {
             // Index of the captured piece type: pawn 0, knight 1, bishop 2, rook 3, queen 4
             uint64_t n = (pos.n >> dstSq) & 1;
@@ -160,10 +150,6 @@ __forceinline Position make(const Position& pos, const Move& move)
                 if (C == Black) hash ^= capturedKeys[WhiteKey];
             }
 #endif
-#if COLLECT_STATS
-            statsCaptures++;
-            statsEPs++;
-#endif
         }
 
         // Set new EP square to the skipped square if double pawn move (64 sets the EPValid bit)
@@ -191,9 +177,6 @@ __forceinline Position make(const Position& pos, const Move& move)
                 hash ^= rookKeys1[Rook - 1] ^ rookKeys2[Rook - 1];
                 if (C == White) hash ^= rookKeys1[WhiteKey] ^ rookKeys2[WhiteKey];
             }
-#endif
-#if COLLECT_STATS
-            statsCastles++;
 #endif
         }
     }

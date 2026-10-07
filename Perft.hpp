@@ -7,9 +7,6 @@
 #include "Config.hpp"
 #include "Make.hpp"
 #include "MoveGeneration.hpp"
-#if COLLECT_STATS
-#include "Stats.hpp"
-#endif
 #if HASH_TABLE
 #include "HashTable.hpp"
 #endif
@@ -27,14 +24,8 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
     if (hashTable && depth >= MinHashDepth) // Don't probe at last levels, because memory access is slower than calculation
     {
         uint64_t entry = hashTable->find(pos, depth);
-#if COLLECT_STATS
-        statsHashProbes++;
-#endif
         if (entry != InvalidHashTableEntry)
         {
-#if COLLECT_STATS
-            statsHashHits++;
-#endif
             return entry;
 }
     }
@@ -55,12 +46,6 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         if (checkers)
         {
             count = countEvasions<C>(pos, occ, pArea, checkers, pins);
-            if (stack == stack0)
-            {
-#if COLLECT_STATS
-                statsCheckmates++;
-#endif
-            }
         }
         else
         {
@@ -74,14 +59,8 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
 #if HASH_TABLE
         if (hashTable && 1 >= MinHashDepth)
         {
-#if COLLECT_STATS
-            statsHashWriteTries++;
-#endif
             if (hashTable->insert({ pos, static_cast<uint16_t>(depth), count }))
             {
-#if COLLECT_STATS
-                statsHashWrites++;
-#endif
             }
         }
 #endif
@@ -93,12 +72,6 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         if (checkers)
         {
             stack = generateEvasions<C>(pos, stack, occ, pArea, checkers, pins);
-            if (stack == stack0)
-            {
-#if COLLECT_STATS
-                statsCheckmates++;
-#endif
-            }
         }
         else
         {
@@ -121,14 +94,8 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
 #if HASH_TABLE
         if (hashTable && depth >= MinHashDepth)
         {
-#if COLLECT_STATS
-            statsHashWriteTries++;
-#endif
             if (hashTable->insert({ pos, static_cast<uint16_t>(depth), count }))
             {
-#if COLLECT_STATS
-                statsHashWrites++;
-#endif
             }
         }
 #endif

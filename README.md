@@ -18,7 +18,7 @@ Where supported options include:
   
   `-w <workers>` Number of worker threads, from 1 to 64. The default is 8. Use `-w 1` to measure single-threaded performance.
   
-  `-s` Print extra stats about moves and hash table. Currently ignored: the stats are enabled at compile time with `COLLECT_STATS`.
+  `-s` Print stats of the leaf nodes: captures, en passants, castles, promotions, checks, discovered checks, double checks, and checkmates, as in https://www.chessprogramming.org/Perft_Results. This uses a slower search without bulk counting and the hash table (see Stats).
 
 For example, `fastperft -d 6 -f "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -"` counts the nodes of the Kiwipete position at depth 6.
 
@@ -36,7 +36,6 @@ The features are selected at compile time in `Config.hpp`:
 
   `HASH_TABLE` Store node counts of subtrees in a hash table. Enabled by default. When enabled, `make` also updates the hash key, but it skips the updates if the hash table is disabled with `-h -1`.
 
-  `COLLECT_STATS` Collect stats about captures, en passants, castlings, checkmates, and hash table use. Disabled by default.
 
 The sliding piece attack lookup method is selected at the top of `MoveGeneration.cpp` (`PEXT_INTRINSIC`, `KINDERGARTEN_BITBOARDS`, `MAGIC_BITBOARDS`).
 
@@ -63,7 +62,7 @@ The speed depends on the position: positions with many moves per node are faster
 
 ## Tests
 
-The tests are in a separate Google Test project, `Test_FastPerft`, which the solution expects in a sibling folder (`..\Test_FastPerft`). Besides unit tests for the FEN parser and parts of the move generation, it contains perft tests for the six positions in https://www.chessprogramming.org/Perft_Results, both without and with a hash table. Their depths are chosen so that each test takes up to roughly 10 seconds in a Release build, so they catch most regressions when optimizing the move generator. Run the tests in a Release build, because a Debug build is far slower.
+The tests are in a separate Google Test project, `Test_FastPerft`, which the solution expects in a sibling folder (`..\Test_FastPerft`). Besides unit tests for the FEN parser and parts of the move generation, it contains perft tests for the six positions in https://www.chessprogramming.org/Perft_Results, both without and with a hash table, and tests for the leaf node stats. Their depths are chosen so that each test takes up to roughly 10 seconds in a Release build, so they catch most regressions when optimizing the move generator. Run the tests in a Release build, because a Debug build is far slower.
 
 ## Design
 
@@ -100,6 +99,12 @@ Some findings from optimizing the move generator:
 - Use `_tzcnt_u64` instead of `_BitScanForward64` to find the next square in a loop. On Intel, the BSF instruction depends on the previous value of its destination register, which can serialize the attack table lookups of consecutive loop iterations. Whether this happens depends on the compiler's register allocation, so it can appear or disappear with unrelated code changes.
 - Small code changes can change the speed by 10-20 % through the compiler's register allocation and inlining decisions, so it's worth checking the disassembly when a change behaves unexpectedly. Force-inlining the color templated functions into `perft` gave several percent speedup, because the pins and other intermediate results can stay in registers.
 - Several seemingly cheaper alternatives were measured to be slower: checking only the king's target squares instead of computing the whole protection area, finding pins with x-ray PEXT attacks, and computing knight attacks with shifts.
+
+### Stats
+
+The `-s` option runs a separate search (`Stats.cpp`), which makes all the moves at the last level instead of counting them in bulk, and classifies them. It doesn't use the hash table. The moves at the root are divided between the worker threads, and each thread collects its own stats, which are summed at the end. It is several times slower than the normal search, e.g. Kiwipete at depth 6 takes about 22 s with 8 threads.
+
+A move is counted as a discovered check if a piece other than the moved one gives check, but not if it is a double check or a check by the rook in castling. With these definitions, the stats match the tables in https://www.chessprogramming.org/Perft_Results, except the double checks in Kiwipete at depths 5 and 6 (2 645 vs. 2 637, and 55 014 vs. 54 948). In all of these double checks, the moved piece gives check, and another piece gives a discovered check. The normal perft counts, which depend on detecting the double checks correctly, match at all depths, so the difference is probably in how the double checks are defined in the tables.
 
 ### Multithreading
 
