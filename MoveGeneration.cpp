@@ -2211,13 +2211,15 @@ uint64_t rmoves(unsigned long src, uint64_t occ)
 #endif
 }
 
-uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
+// Pins and checks against the king of C
+template<Color C>
+__forceinline uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
 {
     memset(&pins, 0, sizeof(Pins));
 
     uint64_t our, king;
     uint64_t pawnsLeft, pawnsRight;
-    if (pos.state & TurnWhite)
+    if (C == White)
     {
         our = pos.w;
         king = pos.k & pos.w;
@@ -2372,6 +2374,14 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
     // King cannot pin or check
 
     return checkers;
+}
+
+template uint64_t findPinsAndCheckers<White>(const Position& pos, uint64_t occ, Pins& pins);
+template uint64_t findPinsAndCheckers<Black>(const Position& pos, uint64_t occ, Pins& pins);
+
+uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
+{
+    return (pos.state & TurnWhite) ? findPinsAndCheckers<White>(pos, occ, pins) : findPinsAndCheckers<Black>(pos, occ, pins);
 }
 
 // Squares attacked by the opponent of C

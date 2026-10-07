@@ -145,5 +145,6 @@ uint64_t weMoves(unsigned long src, uint64_t occ);
 uint64_t snMoves(unsigned long src, uint64_t occ);
 uint64_t rmoves(unsigned long src, uint64_t occ);
 uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins);
+template<Color> uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins);
 uint64_t findProtectionArea(const Position& pos, uint64_t occ);
 template<Color> uint64_t findProtectionArea(const Position& pos, uint64_t occ);
