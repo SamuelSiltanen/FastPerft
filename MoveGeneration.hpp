@@ -5,8 +5,6 @@
 
 #include "ChessTypes.hpp"
 
-#include <immintrin.h>
-
 struct alignas(64) Rays
 {
     uint64_t SE;
@@ -51,101 +49,6 @@ template<Color> uint64_t countN(const Position& pos, uint64_t occ, uint64_t anyP
 template<Color> uint64_t countSliders(const Position& pos, uint64_t occ, const Pins& pins);
 template<Color> uint64_t countK(const Position& pos, uint64_t occ, const uint64_t pArea);
 template<Color> uint64_t countCastling(const Position& pos, uint64_t occ, uint64_t pArea);
-template<Color> uint64_t countMovesTo(const Position& pos, unsigned long dst, uint64_t occ, const Pins& pins);
-
-template<Color C>
-uint64_t countMovesInBetween(const Position& pos, unsigned long dst, uint64_t occ, const Pins& pins)
-{
-    uint64_t count = 0;
-
-    uint64_t our = (pos.state & TurnWhite) ? pos.w : ~pos.w;
-    uint64_t king = pos.k & our;
-    unsigned long kingSq;
-    kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
-
-    if (rays[kingSq].N & (1ULL << dst))
-    {
-        for (unsigned long i = dst + 8; i < kingSq; i += 8)
-        {
-            count += countMovesTo<C>(pos, i, occ, pins);
-        }
-    }
-    else if (rays[kingSq].S & (1ULL << dst))
-    {
-        for (unsigned long i = kingSq + 8; i < dst; i += 8)
-        {
-            count += countMovesTo<C>(pos, i, occ, pins);
-        }
-    }
-    else if (rays[kingSq].W & (1ULL << dst))
-    {
-        for (unsigned long i = dst + 1; i < kingSq; i++)
-        {
-            count += countMovesTo<C>(pos, i, occ, pins);
-        }
-    }
-    else if (rays[kingSq].E & (1ULL << dst))
-    {
-        for (unsigned long i = kingSq + 1; i < dst; i++)
-        {
-            count += countMovesTo<C>(pos, i, occ, pins);
-        }
-    }
-    else if (rays[kingSq].SW & (1ULL << dst))
-    {
-        for (unsigned long i = kingSq + 7; i < dst; i += 7)
-        {
-            count += countMovesTo<C>(pos, i, occ, pins);
-        }
-    }
-    else if (rays[kingSq].NW & (1ULL << dst))
-    {
-        for (unsigned long i = dst + 9; i < kingSq; i += 9)
-        {
-            count += countMovesTo<C>(pos, i, occ, pins);
-        }
-    }
-    else if (rays[kingSq].NE & (1ULL << dst))
-    {
-        for (unsigned long i = dst + 7; i < kingSq; i += 7)
-        {
-            count += countMovesTo<C>(pos, i, occ, pins);
-        }
-    }
-    else if (rays[kingSq].SE & (1ULL << dst))
-    {
-        for (unsigned long i = kingSq + 9; i < dst; i += 9)
-        {
-            count += countMovesTo<C>(pos, i, occ, pins);
-        }
-    }
-
-    return count;
-}
-
-template<Color C>
-uint64_t countCheckEvasions(const Position& pos, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins)
-{
-    uint64_t count = 0;
-
-    count += countK<C>(pos, occ, pArea);
-
-    unsigned long dst;
-    dst = static_cast<unsigned long>(_tzcnt_u64(checkers));
-    checkers ^= (1ULL << dst);
-
-    if (!checkers)
-    {
-        count += countMovesTo<C>(pos, dst, occ, pins);
-
-        if ((1ULL << dst) & (pos.bq | pos.rq))
-        {
-            count += countMovesInBetween<C>(pos, dst, occ, pins);
-        }
-    }
-
-    return count;
-}
 
 // Helpers
 uint64_t swneMoves(unsigned long src, uint64_t occ);
