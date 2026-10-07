@@ -60,6 +60,17 @@ The multithreading scales almost linearly with the number of cores. Kiwipete at 
 
 The speed depends on the position: positions with many moves per node are faster per node, because the leaf nodes are counted in bulk. The hash table helps more at deeper depths, where more positions are reached through different move orders.
 
+With the stats (`-s`), which makes all the moves at the last level and doesn't use the hash table:
+
+| Position | Depth | Nodes | 1 thread | 8 threads | Speedup |
+|---|---|---|---|---|---|
+| Initial position | 6 | 119 060 324 | 1.82 s (66 Mnps) | 0.27 s (435 Mnps) | 6.6x |
+| Initial position | 7 | 3 195 901 860 | 50.3 s (64 Mnps) | 8.2 s (392 Mnps) | 6.2x |
+| Kiwipete | 5 | 193 690 690 | 2.99 s (65 Mnps) | 0.52 s (372 Mnps) | 5.7x |
+| Kiwipete | 6 | 8 031 647 685 | 120.4 s (67 Mnps) | 19.5 s (413 Mnps) | 6.2x |
+
+The stats search scales a bit worse with the threads than the normal search, probably because it divides only the moves at the root between the threads, and the subtrees of the moves differ in size.
+
 ## Tests
 
 The tests are in a separate Google Test project, `Test_FastPerft`, which the solution expects in a sibling folder (`..\Test_FastPerft`). Besides unit tests for the FEN parser and parts of the move generation, it contains perft tests for the six positions in https://www.chessprogramming.org/Perft_Results, both without and with a hash table, and tests for the leaf node stats. Their depths are chosen so that each test takes up to roughly 10 seconds in a Release build, so they catch most regressions when optimizing the move generator. Run the tests in a Release build, because a Debug build is far slower.
@@ -102,7 +113,7 @@ Some findings from optimizing the move generator:
 
 ### Stats
 
-The `-s` option runs a separate search (`Stats.cpp`), which makes all the moves at the last level instead of counting them in bulk, and classifies them. It doesn't use the hash table. The moves at the root are divided between the worker threads, and each thread collects its own stats, which are summed at the end. It is several times slower than the normal search, e.g. Kiwipete at depth 6 takes about 22 s with 8 threads.
+The `-s` option runs a separate search (`Stats.cpp`), which makes all the moves at the last level instead of counting them in bulk, and classifies them. It doesn't use the hash table. The moves at the root are divided between the worker threads, and each thread collects its own stats, which are summed at the end. It is about 12 times slower than the normal search without the hash table (see Performance).
 
 A move is counted as a discovered check if a piece other than the moved one gives check, but not if it is a double check or a check by the rook in castling. With these definitions, the stats match the tables in https://www.chessprogramming.org/Perft_Results, except the double checks in Kiwipete at depths 5 and 6 (2 645 vs. 2 637, and 55 014 vs. 54 948). In all of these double checks, the moved piece gives check, and another piece gives a discovered check. The normal perft counts, which depend on detecting the double checks correctly, match at all depths, so the difference is probably in how the double checks are defined in the tables.
 
