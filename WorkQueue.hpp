@@ -22,10 +22,14 @@ struct alignas(64) WorkItem
     WorkResult* result;
 };
 
+// A double-ended work queue that grows when it is full.
+// The front and back are logical indices that are never wrapped around, so that markers
+// (logical front indices) stay valid when the buffer grows. The buffer slot of a logical
+// index is the index modulo the capacity, which is a power of two.
 class WorkQueue
 {
 public:
-    WorkQueue(size_t size);
+    WorkQueue(size_t initialCapacity);
     ~WorkQueue();
 
     WorkQueue(WorkQueue&) = delete;
@@ -38,18 +42,20 @@ public:
     void push_front_unsafe(const WorkItem& item);
 
     bool try_pop_front(WorkItem& item);
-    bool try_pop_front(WorkItem& item, size_t marker);
+    bool try_pop_front(WorkItem& item, int64_t marker);
 
     void lock();
     void unlock();
 
-    size_t marker();
+    int64_t marker();
 private:
+    void grow();
+    WorkItem& slot(int64_t index) { return m_buffer[static_cast<uint64_t>(index) & (m_capacity - 1)]; }
+
     WorkItem* m_buffer;
-    size_t m_front;
-    size_t m_back;
-    size_t m_size;
-    size_t m_elements;
+    int64_t m_front;
+    int64_t m_back;
+    size_t m_capacity;
 
     std::mutex m_lock;
 };

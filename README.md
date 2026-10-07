@@ -97,7 +97,7 @@ The multithreading uses a simple work stealing approach. Each worker pushes the 
 
 There could be a potential dead lock, where workers pick up each others' work, and then wait for each other to finish. To avoid this, the worker that pushes the branches in the work queue, must keep on working on those branches, and if it finishes so that there is no work left in the queue, but other workers are still processing the branches that were previously in the work queue, it must wait. This can cause some idling, but typically, this is a short time.
 
-The multithreading is disabled by default (see Configuration). Each work queue has a fixed capacity of 256 items (`MaxWorkQueueSize` in `Perft.cpp`), which is checked only with an assert. Every level deeper than 4 (`MinWorkItemDepth`) pushes all its moves to the queue on top of the levels above it, so very deep searches in positions with many moves may need a larger queue.
+The multithreading is disabled by default (see Configuration). Every level deeper than 4 (`MinWorkItemDepth`) pushes all its moves to the work queue on top of the levels above it, so deep searches need more queue space. Each work queue starts with room for 256 items and doubles its capacity when it is full. The queue uses logical front and back indices that are never wrapped around, so the markers that tell the workers which items they pushed stay valid when the queue grows.
 
 ### Hash Table
 

@@ -12,7 +12,7 @@
 
 #if MULTITHREADED
 
-constexpr size_t MaxWorkQueueSize = 256;
+constexpr size_t InitialWorkQueueSize = 256;
 constexpr int MaxMoveStackSize = 1024 * 8;
 constexpr int MinWorkItemDepth = 4;
 
@@ -112,7 +112,7 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
         {
             WorkResult result = { 0, 0 };
             workQueue[threadIndex]->lock();
-            size_t marker = workQueue[threadIndex]->marker();
+            int64_t marker = workQueue[threadIndex]->marker();
             for (--stack; stack >= stack0; --stack)
             {
                 const Move& move = *stack;
@@ -170,7 +170,7 @@ void initMultiPerft(int numWorkers)
     for (int i = 0; i < numWorkerThreads; i++)
     {
         threadLocalStack[i] = new Move[MaxMoveStackSize];
-        workQueue[i] = new WorkQueue(MaxWorkQueueSize);
+        workQueue[i] = new WorkQueue(InitialWorkQueueSize);
         worker[i] = new std::thread(worker_loop, i);
     }
 }
