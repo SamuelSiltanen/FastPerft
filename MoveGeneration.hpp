@@ -38,9 +38,6 @@ Move* generateCheckEvasions(const Position& pos, Move* stack, uint64_t occ, uint
 // Count moves, but don't store them
 template<Color> uint64_t countP(const Position& pos, uint64_t occ, const Pins& pins);
 template<Color> uint64_t countN(const Position& pos, uint64_t occ, uint64_t anyPins);
-template<Color> uint64_t countB(const Position& pos, uint64_t occ, const Pins& pins);
-template<Color> uint64_t countR(const Position& pos, uint64_t occ, const Pins& pins);
-template<Color> uint64_t countQ(const Position& pos, uint64_t occ, const Pins& pins);
 template<Color> uint64_t countSliders(const Position& pos, uint64_t occ, const Pins& pins);
 template<Color> uint64_t countK(const Position& pos, uint64_t occ, const uint64_t pArea);
 template<Color> uint64_t countCastling(const Position& pos, uint64_t occ, uint64_t pArea);
