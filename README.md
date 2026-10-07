@@ -41,13 +41,13 @@ The sliding piece attack lookup method is selected at the top of `MoveGeneration
 
 ## Performance
 
-On an Intel Core i7-9700K (8 cores, no hyper-threading). The times don't include allocating and clearing the hash table, which takes about 0.2 s for the default size of 1 GB.
+On an Intel Core i7-9700K (8 cores, no hyper-threading). The times don't include allocating and clearing the hash table, which takes about 0.2 s for the default size of 1 GB. The speed is the number of leaf nodes divided by the time, so with the hash table, it includes the subtrees whose node counts were found in the hash table.
 
 | Position | Depth | Nodes | 1 thread, no hash table | 8 threads, no hash table | 1 thread, hash table | 8 threads, hash table (default) |
 |---|---|---|---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 4.3 s | 0.61 s | 1.5 s | 0.21 s |
-| Initial position | 8 | 84 998 978 956 | | 16.2 s | | 2.6 s |
-| Kiwipete | 6 | 8 031 647 685 | 7.3 s | 0.96 s | 2.9 s | 0.39 s |
+| Initial position | 7 | 3 195 901 860 | 4.3 s (735 Mnps) | 0.61 s (5.3 Gnps) | 1.5 s (2.1 Gnps) | 0.21 s (15.4 Gnps) |
+| Initial position | 8 | 84 998 978 956 | 118.4 s (718 Mnps) | 16.2 s (5.2 Gnps) | 19.1 s (4.5 Gnps) | 2.6 s (32.3 Gnps) |
+| Kiwipete | 6 | 8 031 647 685 | 7.3 s (1099 Mnps) | 0.96 s (8.4 Gnps) | 2.9 s (2.8 Gnps) | 0.39 s (20.8 Gnps) |
 
 The multithreading scales almost linearly with the number of cores. Kiwipete at depth 6, compiled without the hash table:
 
