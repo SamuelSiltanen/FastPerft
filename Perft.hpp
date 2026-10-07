@@ -66,9 +66,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         {
             count += countP<C>(pos, occ, pins);
             count += countN<C>(pos, occ, pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE);
-            count += countB<C>(pos, occ, pins);
-            count += countR<C>(pos, occ, pins);
-            count += countQ<C>(pos, occ, pins);
+            count += countSliders<C>(pos, occ, pins);
             count += countK<C>(pos, occ, pArea);
             count += countCastling<C>(pos, occ, pArea);
         }

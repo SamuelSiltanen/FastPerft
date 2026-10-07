@@ -108,7 +108,7 @@ void calculateMagicNumber(int x, int y)
         unsigned long pos;
         for (int bit = 0; bit < numBits; bit++)
         {
-            _BitScanForward64(&pos, workMask);
+            pos = static_cast<unsigned long>(_tzcnt_u64(workMask));
             if (maskIndex & (1 << bit))
                 blockers[maskIndex] |= (1ULL << pos);
             workMask ^= (1ULL << pos);
@@ -211,7 +211,7 @@ void calculateMagicNumber(int x, int y)
         unsigned long pos;
         for (int bit = 0; bit < numBits; bit++)
         {
-            _BitScanForward64(&pos, workMask);
+            pos = static_cast<unsigned long>(_tzcnt_u64(workMask));
             if (maskIndex & (1 << bit))
                 blockers[maskIndex] |= (1ULL << pos);
             workMask ^= (1ULL << pos);
@@ -653,8 +653,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
     {
         uint64_t our = pos.w;
         uint64_t pcs = pos.p & our & 0x00ffffffffff0000 & (~occ << 8) & (~anyPins | pins.pinnedSN);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src - 8;
             *stack = Move(Pawn, src, dst);
             ++stack;
@@ -663,8 +664,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         }
 
         pcs = pos.p & our & 0x00ff000000000000 & (~occ << 8) & (~occ << 16) & (~anyPins | pins.pinnedSN);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src - 16;
             *stack = Move(Pawn, src, dst);
             ++stack;
@@ -674,8 +676,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
 
         uint64_t their = occ & ~pos.w;
         pcs = pos.p & our & 0x00fefefefefe0000 & (their << 9) & (~anyPins | pins.pinnedSENW);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src - 9;
             *stack = Move(Pawn, src, dst);
             ++stack;
@@ -684,8 +687,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         }
 
         pcs = pos.p & our & 0x007f7f7f7f7f0000 & (their << 7) & (~anyPins | pins.pinnedSWNE);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src - 7;
             *stack = Move(Pawn, src, dst);
             ++stack;
@@ -695,8 +699,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
 
         // Promotions (also capturing)
         pcs = pos.p & our & 0x000000000000ff00 & (~occ << 8) & (~anyPins | pins.pinnedSN);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src - 8;
             *stack = Move(Pawn, src, dst, Knight);
             ++stack;
@@ -711,8 +716,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         }
         
         pcs = pos.p & our & 0x000000000000fe00 & (their << 9) & (~anyPins | pins.pinnedSENW);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src - 9;
             *stack = Move(Pawn, src, dst, Knight);
             ++stack;
@@ -727,8 +733,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         }
 
         pcs = pos.p & our & 0x0000000000007f00 & (their << 7) & (~anyPins | pins.pinnedSWNE);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src - 7;
             *stack = Move(Pawn, src, dst, Knight);
             ++stack;
@@ -746,8 +753,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
     {
         uint64_t our = occ & ~pos.w;
         uint64_t pcs = pos.p & our & 0x0000ffffffffff00 & (~occ >> 8) & (~anyPins | pins.pinnedSN);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src + 8;
             *stack = Move(Pawn, src, dst);
             ++stack;
@@ -756,8 +764,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         }
 
         pcs = pos.p & our & 0x000000000000ff00 & (~occ >> 8) & (~occ >> 16) & (~anyPins | pins.pinnedSN);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src + 16;
             *stack = Move(Pawn, src, dst);
             ++stack;
@@ -767,8 +776,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
 
         uint64_t their = pos.w;
         pcs = pos.p & our & 0x0000fefefefefe00 & (their >> 7) & (~anyPins | pins.pinnedSWNE);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src + 7;
             *stack = Move(Pawn, src, dst);
             ++stack;
@@ -777,8 +787,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         }
 
         pcs = pos.p & our & 0x00007f7f7f7f7f00 & (their >> 9) & (~anyPins | pins.pinnedSENW);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src + 9;
             *stack = Move(Pawn, src, dst);
             ++stack;
@@ -788,8 +799,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
 
         // Promotions (also capturing)
         pcs = pos.p & our & 0x00ff000000000000 & (~occ >> 8) & (~anyPins | pins.pinnedSN);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src + 8;
             *stack = Move(Pawn, src, dst, Knight);
             ++stack;
@@ -804,8 +816,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         }
 
         pcs = pos.p & our & 0x00fe000000000000 & (their >> 7) & (~anyPins | pins.pinnedSWNE);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src + 7;
             *stack = Move(Pawn, src, dst, Knight);
             ++stack;
@@ -820,8 +833,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         }
 
         pcs = pos.p & our & 0x007f000000000000 & (their >> 9) & (~anyPins | pins.pinnedSENW);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             dst = src + 9;
             *stack = Move(Pawn, src, dst, Knight);
             ++stack;
@@ -847,12 +861,13 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
             // Because EP removes two pieces from the same row, horizontal pins need an extra check
             uint64_t king = pos.k & our;
             unsigned long kingSq;
-            _BitScanForward64(&kingSq, king);
+            kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
             bool kingOnEPRow = (kingSq >> 3) == 3;
 
             uint64_t pcs = pos.p & our & 0xfefefefefefefefeULL & (1ULL << (EPSquare + 9)) & (~anyPins | pins.pinnedSENW);
-            while (_BitScanForward64(&src, pcs)) // Use while instead if to avoid goto-statement (see breaks below)
+            while (pcs) // Use while instead if to avoid goto-statement (see breaks below)
             {
+                src = static_cast<unsigned long>(_tzcnt_u64(pcs));
                 dst = src - 9;
                 if (kingOnEPRow)
                 {
@@ -876,8 +891,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
             }
 
             pcs = pos.p & our & 0x7f7f7f7f7f7f7f7fULL & (1ULL << (EPSquare + 7)) & (~anyPins | pins.pinnedSWNE);
-            while (_BitScanForward64(&src, pcs))
+            while (pcs)
             {
+                src = static_cast<unsigned long>(_tzcnt_u64(pcs));
                 dst = src - 7;
 
                 if (kingOnEPRow)
@@ -908,12 +924,13 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
             // Because EP removes two pieces from the same row, horizontal pins need an extra check
             uint64_t king = pos.k & our;
             unsigned long kingSq;
-            _BitScanForward64(&kingSq, king);
+            kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
             bool kingOnEPRow = (kingSq >> 3) == 4;
 
             uint64_t pcs = pos.p & our & 0xfefefefefefefefeULL & (1ULL << (EPSquare - 7)) & (~anyPins | pins.pinnedSWNE);
-            while (_BitScanForward64(&src, pcs))
+            while (pcs)
             {
+                src = static_cast<unsigned long>(_tzcnt_u64(pcs));
                 dst = src + 7;
 
                 if (kingOnEPRow)
@@ -938,8 +955,9 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
             }
 
             pcs = pos.p & our & 0x7f7f7f7f7f7f7f7fULL & (1ULL << (EPSquare - 9)) & (~anyPins | pins.pinnedSENW);
-            while (_BitScanForward64(&src, pcs))
+            while (pcs)
             {
+                src = static_cast<unsigned long>(_tzcnt_u64(pcs));
                 dst = src + 9;
 
                 if (kingOnEPRow)
@@ -974,11 +992,13 @@ Move* generateN(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins
     
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.n & our & ~anyPins;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = nmoves[src] & ~our;
-        while (_BitScanForward64(&dst, sqrs))
+        while (sqrs)
         {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
             *stack = Move(Knight, src, dst);
             ++stack;
             sqrs &= (sqrs - 1);
@@ -995,14 +1015,16 @@ Move* generateB(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
 
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.bq & ~pos.rq & our & ~(pins.pinnedSN | pins.pinnedWE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
         if (!(pins.pinnedSENW & (1ULL << src))) sqrs |= swneMoves(src, occ);
         if (!(pins.pinnedSWNE & (1ULL << src))) sqrs |= senwMoves(src, occ);        
         sqrs &= ~our;
-        while (_BitScanForward64(&dst, sqrs))
+        while (sqrs)
         {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
             *stack = Move(Bishop, src, dst);
             ++stack;
             sqrs &= (sqrs - 1);
@@ -1019,14 +1041,16 @@ Move* generateR(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
 
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.rq & ~pos.bq & our & ~(pins.pinnedSENW | pins.pinnedSWNE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
         if (!(pins.pinnedWE & (1ULL << src))) sqrs |= snMoves(src, occ);
         if (!(pins.pinnedSN & (1ULL << src))) sqrs |= weMoves(src, occ);
         sqrs &= ~our;
-        while (_BitScanForward64(&dst, sqrs))
+        while (sqrs)
         {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
             *stack = Move(Rook, src, dst);
             ++stack;
             sqrs &= (sqrs - 1);
@@ -1044,8 +1068,9 @@ Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.bq & pos.rq & our;
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
 
         if (!(anyPins & ~pins.pinnedWE & (1ULL << src))) sqrs |= weMoves(src, occ);
@@ -1054,8 +1079,9 @@ Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
         if (!(anyPins & ~pins.pinnedSENW & (1ULL << src))) sqrs |= senwMoves(src, occ);
 
         sqrs &= ~our;
-        while (_BitScanForward64(&dst, sqrs))
+        while (sqrs)
         {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
             *stack = Move(Queen, src, dst);
             ++stack;
             sqrs &= (sqrs - 1);
@@ -1072,10 +1098,11 @@ Move* generateK(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea)
 
     uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.k & our;
-    _BitScanForward64(&src, pcs);
+    src = static_cast<unsigned long>(_tzcnt_u64(pcs));
     uint64_t sqrs = kmoves[src] & ~our & ~pArea;
-    while (_BitScanForward64(&dst, sqrs))
+    while (sqrs)
     {
+        dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
         *stack = Move(King, src, dst);
         ++stack;
         sqrs &= (sqrs - 1);
@@ -1303,8 +1330,9 @@ Move* generateMovesTo(const Position& pos, unsigned long dst, Move* stack, uint6
 
     unsigned long src;
     uint64_t pcs = pos.n & our & nmoves[dst] & ~anyPins;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Knight, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
@@ -1316,64 +1344,72 @@ Move* generateMovesTo(const Position& pos, unsigned long dst, Move* stack, uint6
     uint64_t sn = snMoves(dst, occ);
 
     pcs = pos.bq & ~pos.rq & our & swne & (~anyPins | pins.pinnedSWNE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Bishop, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
     }
 
     pcs = pos.bq & ~pos.rq & our & senw & (~anyPins | pins.pinnedSENW);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Bishop, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
     }
 
     pcs = pos.rq & ~pos.bq & our & we & (~anyPins | pins.pinnedWE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Rook, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
     }
 
     pcs = pos.rq & ~pos.bq & our & sn & (~anyPins | pins.pinnedSN);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Rook, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
     }
 
     pcs = pos.bq & pos.rq & our & swne & (~anyPins | pins.pinnedSWNE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Queen, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
     }
 
     pcs = pos.bq & pos.rq & our & senw & (~anyPins | pins.pinnedSENW);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Queen, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
     }
 
     pcs = pos.bq & pos.rq & our & we & (~anyPins | pins.pinnedWE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Queen, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
     }
 
     pcs = pos.bq & pos.rq & our & sn & (~anyPins | pins.pinnedSN);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         *stack = Move(Queen, src, dst);
         ++stack;
         pcs ^= (1ULL << src);
@@ -1389,7 +1425,7 @@ Move* generateMovesInBetween(const Position& pos, unsigned long dst, Move* stack
     uint64_t our = (pos.state & TurnWhite) ? pos.w : ~pos.w;
     uint64_t king = pos.k & our;
     unsigned long kingSq;
-    _BitScanForward64(&kingSq, king);
+    kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
 
     if (rays[kingSq].N & (1ULL << dst))
     {
@@ -1456,7 +1492,7 @@ Move* generateCheckEvasions(const Position& pos, Move* stack, uint64_t occ, uint
     stack = generateK(pos, stack, occ, pArea);
 
     unsigned long dst;
-    _BitScanForward64(&dst, checkers);
+    dst = static_cast<unsigned long>(_tzcnt_u64(checkers));
     checkers ^= (1ULL << dst);
 
     if (!checkers)
@@ -1523,12 +1559,13 @@ uint64_t countP<Black>(const Position& pos, uint64_t occ, const Pins& pins)
         // Because EP removes two pieces from the same row, horizontal pins need an extra check
         uint64_t king = pos.k & our;
         unsigned long kingSq;
-        _BitScanForward64(&kingSq, king);
+        kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
         bool kingOnEPRow = (kingSq >> 3) == 4;
 
         uint64_t pcs = pos.p & our & 0xfefefefefefefefeULL & (1ULL << (EPSquare - 7)) & (~anyPins | pins.pinnedSWNE);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             if (kingOnEPRow)
             {
                 uint64_t left = rays[src - 1].W & occ;
@@ -1550,8 +1587,9 @@ uint64_t countP<Black>(const Position& pos, uint64_t occ, const Pins& pins)
         }
 
         pcs = pos.p & our & 0x7f7f7f7f7f7f7f7fULL & (1ULL << (EPSquare - 9)) & (~anyPins | pins.pinnedSENW);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             if (kingOnEPRow)
             {
                 uint64_t left = rays[src].W & occ;
@@ -1627,12 +1665,13 @@ uint64_t countP<White>(const Position& pos, uint64_t occ, const Pins& pins)
         // Because EP removes two pieces from the same row, horizontal pins need an extra check
         uint64_t king = pos.k & our;
         unsigned long kingSq;
-        _BitScanForward64(&kingSq, king);
+        kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
         bool kingOnEPRow = (kingSq >> 3) == 3;
 
         uint64_t pcs = pos.p & our & 0xfefefefefefefefeULL & (1ULL << (EPSquare + 9)) & (~anyPins | pins.pinnedSENW);
-        while (_BitScanForward64(&src, pcs)) // Use while instead if to avoid goto-statement (see breaks below)
+        while (pcs) // Use while instead if to avoid goto-statement (see breaks below)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             if (kingOnEPRow)
             {
                 uint64_t left = rays[src - 1].W & occ;
@@ -1654,8 +1693,9 @@ uint64_t countP<White>(const Position& pos, uint64_t occ, const Pins& pins)
         }
 
         pcs = pos.p & our & 0x7f7f7f7f7f7f7f7fULL & (1ULL << (EPSquare + 7)) & (~anyPins | pins.pinnedSWNE);
-        while (_BitScanForward64(&src, pcs))
+        while (pcs)
         {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
             if (kingOnEPRow)
             {
                 uint64_t left = rays[src].W & occ;
@@ -1689,8 +1729,9 @@ uint64_t countN<Black>(const Position& pos, uint64_t occ, uint64_t anyPins)
 
     uint64_t our = occ & ~pos.w;
     uint64_t pcs = pos.n & our & ~anyPins;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = nmoves[src] & ~our;
         count += __popcnt64(sqrs);
         pcs &= (pcs - 1);
@@ -1708,8 +1749,9 @@ uint64_t countN<White>(const Position& pos, uint64_t occ, uint64_t anyPins)
 
     uint64_t our = pos.w;
     uint64_t pcs = pos.n & our & ~anyPins;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = nmoves[src] & ~our;
         count += __popcnt64(sqrs);
         pcs &= (pcs - 1);
@@ -1727,8 +1769,9 @@ uint64_t countB<Black>(const Position& pos, uint64_t occ, const Pins& pins)
 
     uint64_t our = occ & ~pos.w;
     uint64_t pcs = pos.bq & ~pos.rq & our & ~(pins.pinnedSN | pins.pinnedWE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
         if (!((pins.pinnedSENW | pins.pinnedSWNE) & (1ULL << src)))
         {
@@ -1756,8 +1799,9 @@ uint64_t countB<White>(const Position& pos, uint64_t occ, const Pins& pins)
 
     uint64_t our = pos.w;
     uint64_t pcs = pos.bq & ~pos.rq & our & ~(pins.pinnedSN | pins.pinnedWE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
         if (!((pins.pinnedSENW | pins.pinnedSWNE) & (1ULL << src)))
         {
@@ -1785,8 +1829,9 @@ uint64_t countR<Black>(const Position& pos, uint64_t occ, const Pins& pins)
 
     uint64_t our = occ & ~pos.w;
     uint64_t pcs = pos.rq & ~pos.bq & our & ~(pins.pinnedSENW | pins.pinnedSWNE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
         if (!((pins.pinnedSN | pins.pinnedWE) & (1ULL << src)))
         {
@@ -1814,8 +1859,9 @@ uint64_t countR<White>(const Position& pos, uint64_t occ, const Pins& pins)
 
     uint64_t our = pos.w;
     uint64_t pcs = pos.rq & ~pos.bq & our & ~(pins.pinnedSENW | pins.pinnedSWNE);
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
         if (!((pins.pinnedSN | pins.pinnedWE) & (1ULL << src)))
         {
@@ -1844,8 +1890,9 @@ uint64_t countQ<Black>(const Position& pos, uint64_t occ, const Pins& pins)
     uint64_t our = occ & ~pos.w;
     uint64_t pcs = pos.bq & pos.rq & our;
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
 
         if (!(anyPins & (1ULL << src)))
@@ -1879,8 +1926,9 @@ uint64_t countQ<White>(const Position& pos, uint64_t occ, const Pins& pins)
     uint64_t our = pos.w;
     uint64_t pcs = pos.bq & pos.rq & our;
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         uint64_t sqrs = 0;
 
         if (!(anyPins & (1ULL << src)))
@@ -1904,6 +1952,76 @@ uint64_t countQ<White>(const Position& pos, uint64_t occ, const Pins& pins)
     return count;
 }
 
+// Counts bishop, rook, and queen moves. Queens are counted in both the diagonal and the orthogonal pass.
+// Pinned pieces are rare, so they are handled separately and the common case has no pin checks.
+template<Color C>
+__forceinline uint64_t countSliders(const Position& pos, uint64_t occ, const Pins& pins)
+{
+    uint64_t count = 0;
+
+    unsigned long src;
+
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
+    uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
+
+    uint64_t pcs = pos.bq & our & ~anyPins;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        count += __popcnt64(bmoves(src, occ) & ~our);
+        pcs &= (pcs - 1);
+    }
+
+    pcs = pos.rq & our & ~anyPins;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        count += __popcnt64(rmoves(src, occ) & ~our);
+        pcs &= (pcs - 1);
+    }
+
+    if (anyPins & (pos.bq | pos.rq))
+    {
+        // A pinned piece can only move along the pin line
+        pcs = pos.bq & pins.pinnedSWNE;
+        while (pcs)
+        {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+            count += __popcnt64(swneMoves(src, occ) & ~our);
+            pcs &= (pcs - 1);
+        }
+
+        pcs = pos.bq & pins.pinnedSENW;
+        while (pcs)
+        {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+            count += __popcnt64(senwMoves(src, occ) & ~our);
+            pcs &= (pcs - 1);
+        }
+
+        pcs = pos.rq & pins.pinnedWE;
+        while (pcs)
+        {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+            count += __popcnt64(weMoves(src, occ) & ~our);
+            pcs &= (pcs - 1);
+        }
+
+        pcs = pos.rq & pins.pinnedSN;
+        while (pcs)
+        {
+            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+            count += __popcnt64(snMoves(src, occ) & ~our);
+            pcs &= (pcs - 1);
+        }
+    }
+
+    return count;
+}
+
+template uint64_t countSliders<White>(const Position& pos, uint64_t occ, const Pins& pins);
+template uint64_t countSliders<Black>(const Position& pos, uint64_t occ, const Pins& pins);
+
 template<>
 uint64_t countK<Black>(const Position& pos, uint64_t occ, const uint64_t pArea)
 {
@@ -1913,7 +2031,7 @@ uint64_t countK<Black>(const Position& pos, uint64_t occ, const uint64_t pArea)
 
     uint64_t our = occ & ~pos.w;
     uint64_t pcs = pos.k & our;
-    _BitScanForward64(&src, pcs);
+    src = static_cast<unsigned long>(_tzcnt_u64(pcs));
     uint64_t sqrs = kmoves[src] & ~our & ~pArea;
     count += __popcnt64(sqrs);
 
@@ -1929,7 +2047,7 @@ uint64_t countK<White>(const Position& pos, uint64_t occ, const uint64_t pArea)
 
     uint64_t our = pos.w;
     uint64_t pcs = pos.k & our;
-    _BitScanForward64(&src, pcs);
+    src = static_cast<unsigned long>(_tzcnt_u64(pcs));
     uint64_t sqrs = kmoves[src] & ~our & ~pArea;
     count += __popcnt64(sqrs);
 
@@ -2193,7 +2311,7 @@ uint64_t swneMoves(unsigned long src, uint64_t occ)
     unsigned long hit;
     uint64_t bRays = 0;
 
-    _BitScanForward64(&hit, (rays[src].SW & occ) | 0x8000000000000000);
+    hit = static_cast<unsigned long>(_tzcnt_u64((rays[src].SW & occ) | 0x8000000000000000));
     bRays |= rays[src].SW;
     bRays ^= rays[hit].SW;
 
@@ -2215,7 +2333,7 @@ uint64_t senwMoves(unsigned long src, uint64_t occ)
     unsigned long hit;
     uint64_t bRays = 0;
 
-    _BitScanForward64(&hit, (rays[src].SE & occ) | 0x8000000000000000);
+    hit = static_cast<unsigned long>(_tzcnt_u64((rays[src].SE & occ) | 0x8000000000000000));
     bRays |= rays[src].SE;
     bRays ^= rays[hit].SE;
 
@@ -2255,7 +2373,7 @@ uint64_t weMoves(unsigned long src, uint64_t occ)
     unsigned long hit;
     uint64_t rRays = 0;
 
-    _BitScanForward64(&hit, (rays[src].E & occ) | 0x8000000000000000);
+    hit = static_cast<unsigned long>(_tzcnt_u64((rays[src].E & occ) | 0x8000000000000000));
     rRays |= rays[src].E;
     rRays ^= rays[hit].E;
 
@@ -2279,7 +2397,7 @@ uint64_t snMoves(unsigned long src, uint64_t occ)
     unsigned long hit;
     uint64_t rRays = 0;
 
-    _BitScanForward64(&hit, (rays[src].S & occ) | 0x8000000000000000);
+    hit = static_cast<unsigned long>(_tzcnt_u64((rays[src].S & occ) | 0x8000000000000000));
     rRays |= rays[src].S;
     rRays ^= rays[hit].S;
 
@@ -2334,7 +2452,7 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
     uint64_t their = ~our;    
 
     unsigned long src;
-    _BitScanForward64(&src, king);
+    src = static_cast<unsigned long>(_tzcnt_u64(king));
 
     uint64_t checkers = 0;
         
@@ -2353,12 +2471,12 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
     if (attackers)
     {        
         ray &= occ;
-        _BitScanForward64(&hit1, ray);
+        hit1 = static_cast<unsigned long>(_tzcnt_u64(ray));
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & bPcs;
         uint64_t potentialPinned = firstHit & occ & our;
         ray &= ~potentialPinned;
-        _BitScanForward64(&hit2, ray);
+        hit2 = static_cast<unsigned long>(_tzcnt_u64(ray));
         if ((1ULL << hit2) & bPcs)
             pins.pinnedSENW |= potentialPinned;
     }
@@ -2383,12 +2501,12 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
     if (attackers)
     {
         ray &= occ;
-        _BitScanForward64(&hit1, ray);
+        hit1 = static_cast<unsigned long>(_tzcnt_u64(ray));
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & bPcs;
         uint64_t potentialPinned = firstHit & occ & our;
         ray &= ~potentialPinned;
-        _BitScanForward64(&hit2, ray);
+        hit2 = static_cast<unsigned long>(_tzcnt_u64(ray));
         if ((1ULL << hit2) & bPcs)
             pins.pinnedSWNE |= potentialPinned;
     }
@@ -2413,12 +2531,12 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
     if (attackers)
     {
         ray &= occ;
-        _BitScanForward64(&hit1, ray);
+        hit1 = static_cast<unsigned long>(_tzcnt_u64(ray));
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & rPcs;
         uint64_t potentialPinned = firstHit & occ & our;
         ray &= ~potentialPinned;
-        _BitScanForward64(&hit2, ray);
+        hit2 = static_cast<unsigned long>(_tzcnt_u64(ray));
         if ((1ULL << hit2) & rPcs)
             pins.pinnedSN |= potentialPinned;
     }
@@ -2458,12 +2576,12 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
     if (attackers)
     {
         ray &= occ;
-        _BitScanForward64(&hit1, ray);
+        hit1 = static_cast<unsigned long>(_tzcnt_u64(ray));
         uint64_t firstHit = (1ULL << hit1);
         checkers |= firstHit & rPcs;
         uint64_t potentialPinned = firstHit & occ & our;
         ray &= ~potentialPinned;
-        _BitScanForward64(&hit2, ray);
+        hit2 = static_cast<unsigned long>(_tzcnt_u64(ray));
         if ((1ULL << hit2) & rPcs)
             pins.pinnedWE |= potentialPinned;
     }
@@ -2491,8 +2609,9 @@ uint64_t findProtectionArea(const Position& pos, uint64_t occ)
     }     
     
     uint64_t pcs = pos.n & their;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         pArea |= nmoves[src];
         pcs &= (pcs - 1);
     }    
@@ -2500,21 +2619,23 @@ uint64_t findProtectionArea(const Position& pos, uint64_t occ)
     occ ^= (pos.k & ~their); // King doesn't block the sliding pieces' protection area
 
     pcs = pos.bq & their;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         pcs &= (pcs - 1);
         pArea |= bmoves(src, occ);
     }
 
     pcs = pos.rq & their;
-    while (_BitScanForward64(&src, pcs))
+    while (pcs)
     {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
         pcs &= (pcs - 1);
         pArea |= rmoves(src, occ);
     }
 
     pcs = pos.k & their;
-    _BitScanForward64(&src, pcs);
+    src = static_cast<unsigned long>(_tzcnt_u64(pcs));
     pArea |= kmoves[src];
 
     return pArea;

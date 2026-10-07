@@ -5,6 +5,8 @@
 
 #include "ChessTypes.hpp"
 
+#include <immintrin.h>
+
 struct alignas(64) Rays
 {
     uint64_t SE;
@@ -39,6 +41,7 @@ template<Color> uint64_t countN(const Position& pos, uint64_t occ, uint64_t anyP
 template<Color> uint64_t countB(const Position& pos, uint64_t occ, const Pins& pins);
 template<Color> uint64_t countR(const Position& pos, uint64_t occ, const Pins& pins);
 template<Color> uint64_t countQ(const Position& pos, uint64_t occ, const Pins& pins);
+template<Color> uint64_t countSliders(const Position& pos, uint64_t occ, const Pins& pins);
 template<Color> uint64_t countK(const Position& pos, uint64_t occ, const uint64_t pArea);
 template<Color> uint64_t countCastling(const Position& pos, uint64_t occ, uint64_t pArea);
 template<Color> uint64_t countMovesTo(const Position& pos, unsigned long dst, uint64_t occ, const Pins& pins);
@@ -51,7 +54,7 @@ uint64_t countMovesInBetween(const Position& pos, unsigned long dst, uint64_t oc
     uint64_t our = (pos.state & TurnWhite) ? pos.w : ~pos.w;
     uint64_t king = pos.k & our;
     unsigned long kingSq;
-    _BitScanForward64(&kingSq, king);
+    kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
 
     if (rays[kingSq].N & (1ULL << dst))
     {
@@ -121,7 +124,7 @@ uint64_t countCheckEvasions(const Position& pos, uint64_t occ, uint64_t pArea, u
     count += countK<C>(pos, occ, pArea);
 
     unsigned long dst;
-    _BitScanForward64(&dst, checkers);
+    dst = static_cast<unsigned long>(_tzcnt_u64(checkers));
     checkers ^= (1ULL << dst);
 
     if (!checkers)
