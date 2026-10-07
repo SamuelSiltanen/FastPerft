@@ -42,12 +42,22 @@ The sliding piece attack lookup method is selected at the top of `MoveGeneration
 
 ## Performance
 
-Without the hash table, on an Intel Core i7-9700K (8 cores):
+Without the hash table, on an Intel Core i7-9700K (8 cores, no hyper-threading), best of two runs:
 
-| Position | Depth | Nodes | Single-threaded | 8 threads |
-|---|---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 4.2 s (756 Mnps) | 0.59 s (5.4 Gnps) |
-| Kiwipete | 6 | 8 031 647 685 | 7.0 s (1155 Mnps) | 0.95 s (8.4 Gnps) |
+| Position | Depth | Nodes | 1 thread (`-w 1`) | 8 threads (default) | Speedup |
+|---|---|---|---|---|---|
+| Initial position | 7 | 3 195 901 860 | 4.29 s (745 Mnps) | 0.58 s (5.5 Gnps) | 7.4x |
+| Initial position | 8 | 84 998 978 956 | 115.6 s (735 Mnps) | 15.8 s (5.4 Gnps) | 7.3x |
+| Kiwipete | 6 | 8 031 647 685 | 6.89 s (1165 Mnps) | 0.94 s (8.6 Gnps) | 7.4x |
+
+The multithreading scales almost linearly with the number of cores. Kiwipete at depth 6:
+
+| Threads | Time | Speedup |
+|---|---|---|
+| 1 | 6.89 s | 1.0x |
+| 2 | 3.64 s | 1.9x |
+| 4 | 1.83 s | 3.8x |
+| 8 | 0.94 s | 7.4x |
 
 The speed depends on the position: positions with many moves per node are faster per node, because the leaf nodes are counted in bulk.
 
