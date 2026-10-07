@@ -34,7 +34,7 @@ The features are selected at compile time in `Config.hpp`:
 
   `LEAF_NODE_BULK_COUNT` Count the moves at the second to last level instead of making them (see Design). Enabled by default.
 
-  `HASH_TABLE` Store node counts of subtrees in a hash table. Enabled by default. When enabled, `make` also updates the hash key, even if the hash table is disabled with `-h -1`. So with `-h -1`, the speed is about 5-10 % lower than when compiled without the hash table.
+  `HASH_TABLE` Store node counts of subtrees in a hash table. Enabled by default. When enabled, `make` also updates the hash key, but it skips the updates if the hash table is disabled with `-h -1`.
 
   `COLLECT_STATS` Collect stats about captures, en passants, castlings, checkmates, and hash table use. Disabled by default.
 
@@ -46,9 +46,9 @@ On an Intel Core i7-9700K (8 cores, no hyper-threading). The times don't include
 
 | Position | Depth | Nodes | 1 thread, no hash table | 8 threads, no hash table | 1 thread, hash table | 8 threads, hash table (default) |
 |---|---|---|---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 4.5 s | 0.62 s | 1.5 s | 0.21 s |
-| Initial position | 8 | 84 998 978 956 | | 17.2 s | | 2.7 s |
-| Kiwipete | 6 | 8 031 647 685 | 7.6 s | 1.01 s | 2.9 s | 0.39 s |
+| Initial position | 7 | 3 195 901 860 | 4.3 s | 0.61 s | 1.5 s | 0.21 s |
+| Initial position | 8 | 84 998 978 956 | | 16.2 s | | 2.6 s |
+| Kiwipete | 6 | 8 031 647 685 | 7.3 s | 0.96 s | 2.9 s | 0.39 s |
 
 The multithreading scales almost linearly with the number of cores. Kiwipete at depth 6, compiled without the hash table:
 

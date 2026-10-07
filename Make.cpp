@@ -81,23 +81,32 @@ __forceinline Position make(const Position& pos, const Move& move)
 #endif
 
 #if HASH_TABLE
+    // The hash key is needed only with a hash table. Without it, next.hash keeps the old, unused value.
+    const bool updateHash = (hashTable != nullptr);
+
     // The keys of a square are indexed by piece type - 1, and the white key is at WhiteKey
-    const uint64_t* srcKeys = HashTable::squareKeys(srcSq);
-    const uint64_t* dstKeys = HashTable::squareKeys(dstSq);
     constexpr int WhiteKey = 6;
+    const uint64_t* dstKeys = nullptr;
+    uint64_t hash = 0;
 
-    uint64_t hash = pos.hash;
-    hash ^= srcKeys[piece - 1] ^ dstKeys[piece - 1];
-    if (C == White) hash ^= srcKeys[WhiteKey] ^ dstKeys[WhiteKey];
-
-    if (captured)
+    if (updateHash)
     {
-        // Index of the captured piece type: pawn 0, knight 1, bishop 2, rook 3, queen 4
-        uint64_t n = (pos.n >> dstSq) & 1;
-        uint64_t b = (pos.bq >> dstSq) & 1;
-        uint64_t r = (pos.rq >> dstSq) & 1;
-        hash ^= dstKeys[n + 2 * b + 3 * r - (b & r)];
-        if (C == Black) hash ^= dstKeys[WhiteKey];
+        const uint64_t* srcKeys = HashTable::squareKeys(srcSq);
+        dstKeys = HashTable::squareKeys(dstSq);
+
+        hash = pos.hash;
+        hash ^= srcKeys[piece - 1] ^ dstKeys[piece - 1];
+        if (C == White) hash ^= srcKeys[WhiteKey] ^ dstKeys[WhiteKey];
+
+        if (captured)
+        {
+            // Index of the captured piece type: pawn 0, knight 1, bishop 2, rook 3, queen 4
+            uint64_t n = (pos.n >> dstSq) & 1;
+            uint64_t b = (pos.bq >> dstSq) & 1;
+            uint64_t r = (pos.rq >> dstSq) & 1;
+            hash ^= dstKeys[n + 2 * b + 3 * r - (b & r)];
+            if (C == Black) hash ^= dstKeys[WhiteKey];
+        }
     }
 #endif
 
@@ -112,7 +121,7 @@ __forceinline Position make(const Position& pos, const Move& move)
         pieces = _mm256_xor_si256(pieces, _mm256_set_epi64x(0, 0, 0, dst));
         pieces = _mm256_xor_si256(pieces, _mm256_and_si256(_mm256_load_si256((const __m256i*)PieceLanes[move.prom()]), _mm256_set1_epi64x(dst)));
 #if HASH_TABLE
-        hash ^= dstKeys[Pawn - 1] ^ dstKeys[move.prom() - 1];
+        if (updateHash) hash ^= dstKeys[Pawn - 1] ^ dstKeys[move.prom() - 1];
 #endif
     }
     _mm256_store_si256((__m256i*)&next, pieces);
@@ -144,9 +153,12 @@ __forceinline Position make(const Position& pos, const Move& move)
                 next.w ^= (dst >> 8);
             }
 #if HASH_TABLE
-            const uint64_t* capturedKeys = HashTable::squareKeys((C == White) ? dstSq + 8 : dstSq - 8);
-            hash ^= capturedKeys[Pawn - 1];
-            if (C == Black) hash ^= capturedKeys[WhiteKey];
+            if (updateHash)
+            {
+                const uint64_t* capturedKeys = HashTable::squareKeys((C == White) ? dstSq + 8 : dstSq - 8);
+                hash ^= capturedKeys[Pawn - 1];
+                if (C == Black) hash ^= capturedKeys[WhiteKey];
+            }
 #endif
 #if COLLECT_STATS
             statsCaptures++;
@@ -172,10 +184,13 @@ __forceinline Position make(const Position& pos, const Move& move)
             next.rq ^= rookMov;
             if (C == White) next.w ^= rookMov;
 #if HASH_TABLE
-            const uint64_t* rookKeys1 = HashTable::squareKeys(static_cast<unsigned long>(_tzcnt_u64(rookMov)));
-            const uint64_t* rookKeys2 = HashTable::squareKeys(63 - static_cast<unsigned long>(_lzcnt_u64(rookMov)));
-            hash ^= rookKeys1[Rook - 1] ^ rookKeys2[Rook - 1];
-            if (C == White) hash ^= rookKeys1[WhiteKey] ^ rookKeys2[WhiteKey];
+            if (updateHash)
+            {
+                const uint64_t* rookKeys1 = HashTable::squareKeys(static_cast<unsigned long>(_tzcnt_u64(rookMov)));
+                const uint64_t* rookKeys2 = HashTable::squareKeys(63 - static_cast<unsigned long>(_lzcnt_u64(rookMov)));
+                hash ^= rookKeys1[Rook - 1] ^ rookKeys2[Rook - 1];
+                if (C == White) hash ^= rookKeys1[WhiteKey] ^ rookKeys2[WhiteKey];
+            }
 #endif
 #if COLLECT_STATS
             statsCastles++;
@@ -187,7 +202,7 @@ __forceinline Position make(const Position& pos, const Move& move)
     next.state ^= 1;
 
 #if HASH_TABLE
-    next.hash = hash ^ HashTable::stateHash(pos.state) ^ HashTable::stateHash(next.state);
+    if (updateHash) next.hash = hash ^ HashTable::stateHash(pos.state) ^ HashTable::stateHash(next.state);
 #endif
 
     return next;
