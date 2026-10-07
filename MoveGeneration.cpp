@@ -2374,13 +2374,15 @@ uint64_t findPinsAndCheckers(const Position& pos, uint64_t occ, Pins& pins)
     return checkers;
 }
 
-uint64_t findProtectionArea(const Position& pos, uint64_t occ)
+// Squares attacked by the opponent of C
+template<Color C>
+__forceinline uint64_t findProtectionArea(const Position& pos, uint64_t occ)
 {
     unsigned long src;
     uint64_t pArea = 0;
 
-    uint64_t their = pos.state & TurnWhite ? ~pos.w : pos.w;
-    if (pos.state & TurnWhite)
+    uint64_t their = (C == White) ? ~pos.w : pos.w;
+    if (C == White)
     {
         pArea |= ((pos.p & their) & 0xfefefefefefefefe) << 7;
         pArea |= ((pos.p & their) & 0x7f7f7f7f7f7f7f7f) << 9;
@@ -2422,4 +2424,12 @@ uint64_t findProtectionArea(const Position& pos, uint64_t occ)
     pArea |= kmoves[src];
 
     return pArea;
+}
+
+template uint64_t findProtectionArea<White>(const Position& pos, uint64_t occ);
+template uint64_t findProtectionArea<Black>(const Position& pos, uint64_t occ);
+
+uint64_t findProtectionArea(const Position& pos, uint64_t occ)
+{
+    return (pos.state & TurnWhite) ? findProtectionArea<White>(pos, occ) : findProtectionArea<Black>(pos, occ);
 }
