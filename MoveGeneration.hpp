@@ -42,6 +42,8 @@ template<Color> Move* generateCastling(const Position& pos, Move* stack, uint64_
 Move* generateMovesTo(const Position& pos, unsigned long dst, Move* stack, uint64_t occ, const Pins& pins);
 Move* generateMovesInBetween(const Position& pos, unsigned long dst, Move* stack, uint64_t occ, const Pins& pins);
 Move* generateCheckEvasions(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins);
+template<Color> uint64_t countEvasions(const Position& pos, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins);
+template<Color> Move* generateEvasions(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins);
 
 // Count moves, but don't store them
 template<Color> uint64_t countP(const Position& pos, uint64_t occ, const Pins& pins);

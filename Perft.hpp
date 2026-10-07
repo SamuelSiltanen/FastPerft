@@ -54,7 +54,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
 
         if (checkers)
         {
-            count = countCheckEvasions<C>(pos, occ, pArea, checkers, pins);
+            count = countEvasions<C>(pos, occ, pArea, checkers, pins);
             if (stack == stack0)
             {
 #if COLLECT_STATS
@@ -92,7 +92,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
     {
         if (checkers)
         {
-            stack = generateCheckEvasions(pos, stack, occ, pArea, checkers, pins);
+            stack = generateEvasions<C>(pos, stack, occ, pArea, checkers, pins);
             if (stack == stack0)
             {
 #if COLLECT_STATS

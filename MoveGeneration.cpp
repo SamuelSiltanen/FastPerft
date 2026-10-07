@@ -1633,6 +1633,255 @@ Move* generateMovesInBetween(const Position& pos, unsigned long dst, Move* stack
     return stack;
 }
 
+// Stores a pawn move, or all four promotions if the pawn moves to the last rank
+static __forceinline Move* storePawnMove(Move* stack, unsigned long src, unsigned long dst)
+{
+    if ((1ULL << dst) & 0xff000000000000ffULL)
+    {
+        stack[0] = Move(Pawn, src, dst, Knight);
+        stack[1] = Move(Pawn, src, dst, Bishop);
+        stack[2] = Move(Pawn, src, dst, Rook);
+        stack[3] = Move(Pawn, src, dst, Queen);
+        return stack + 4;
+    }
+    *stack = Move(Pawn, src, dst);
+    return stack + 1;
+}
+
+// Generates check evasions: king moves, and with a single checker, moves that capture the checker or
+// block the check. Pinned pieces are skipped, because they can never resolve a check.
+template<Color C>
+__forceinline Move* generateEvasions(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins)
+{
+    stack = generateK<C>(pos, stack, occ, pArea);
+
+    if (checkers & (checkers - 1)) return stack; // Double check, only king moves
+
+    unsigned long src, dst;
+
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
+    uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
+    uint64_t movable = our & ~anyPins;
+    uint64_t empty = ~occ;
+
+    unsigned long kingSq = static_cast<unsigned long>(_tzcnt_u64(pos.k & our));
+    unsigned long checkerSq = static_cast<unsigned long>(_tzcnt_u64(checkers));
+
+    // The squares between the king and a sliding checker are where their attacks intersect
+    uint64_t between = 0;
+    if (checkers & (pos.bq | pos.rq))
+    {
+        between = (BAttacks[kingSq][0] & checkers) ?
+            bmoves(kingSq, occ) & bmoves(checkerSq, occ) :
+            rmoves(kingSq, occ) & rmoves(checkerSq, occ);
+    }
+    uint64_t targets = checkers | between;
+
+    // Pawns
+    uint64_t pawns = pos.p & movable;
+    uint64_t pcs = pawns & ((C == White) ? (empty << 8) & (targets << 8) : (empty >> 8) & (targets >> 8));
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        stack = storePawnMove(stack, src, (C == White) ? src - 8 : src + 8);
+        pcs &= (pcs - 1);
+    }
+
+    pcs = pawns & ((C == White) ?
+        0x00ff000000000000 & (empty << 8) & (empty << 16) & (targets << 16) :
+        0x000000000000ff00 & (empty >> 8) & (empty >> 16) & (targets >> 16));
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        *stack = Move(Pawn, src, (C == White) ? src - 16 : src + 16);
+        ++stack;
+        pcs &= (pcs - 1);
+    }
+
+    // West captures go towards the a-file and east captures towards the h-file
+    pcs = pawns & 0xfefefefefefefefe & ((C == White) ? (checkers << 9) : (checkers >> 7));
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        stack = storePawnMove(stack, src, (C == White) ? src - 9 : src + 7);
+        pcs &= (pcs - 1);
+    }
+
+    pcs = pawns & 0x7f7f7f7f7f7f7f7f & ((C == White) ? (checkers << 7) : (checkers >> 9));
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        stack = storePawnMove(stack, src, (C == White) ? src - 7 : src + 9);
+        pcs &= (pcs - 1);
+    }
+
+    // En passant resolves the check only when the captured pawn is the checker
+    if (pos.state & EPValid)
+    {
+        unsigned long epSq = static_cast<unsigned long>((pos.state >> 5) & 63);
+        if (checkers & ((C == White) ? (1ULL << (epSq + 8)) : (1ULL << (epSq - 8))))
+        {
+            pcs = (C == White) ?
+                (pawns & 0xfefefefefefefefe & (1ULL << (epSq + 9))) | (pawns & 0x7f7f7f7f7f7f7f7f & (1ULL << (epSq + 7))) :
+                (pawns & 0xfefefefefefefefe & (1ULL << (epSq - 7))) | (pawns & 0x7f7f7f7f7f7f7f7f & (1ULL << (epSq - 9)));
+            while (pcs)
+            {
+                src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+                *stack = Move(Pawn, src, epSq);
+                ++stack;
+                pcs &= (pcs - 1);
+            }
+        }
+    }
+
+    // Knights
+    pcs = pos.n & movable;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        uint64_t sqrs = nmoves[src] & targets;
+        while (sqrs)
+        {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
+            *stack = Move(Knight, src, dst);
+            ++stack;
+            sqrs &= (sqrs - 1);
+        }
+        pcs &= (pcs - 1);
+    }
+
+    // Sliders. A piece on both bq and rq is a queen.
+    pcs = pos.bq & movable;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        Piece piece = static_cast<Piece>(Bishop + 2 * ((pos.rq >> src) & 1));
+        uint64_t sqrs = bmoves(src, occ) & targets;
+        while (sqrs)
+        {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
+            *stack = Move(piece, src, dst);
+            ++stack;
+            sqrs &= (sqrs - 1);
+        }
+        pcs &= (pcs - 1);
+    }
+
+    pcs = pos.rq & movable;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        Piece piece = static_cast<Piece>(Rook + ((pos.bq >> src) & 1));
+        uint64_t sqrs = rmoves(src, occ) & targets;
+        while (sqrs)
+        {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
+            *stack = Move(piece, src, dst);
+            ++stack;
+            sqrs &= (sqrs - 1);
+        }
+        pcs &= (pcs - 1);
+    }
+
+    return stack;
+}
+
+// Counts check evasions, see generateEvasions
+template<Color C>
+__forceinline uint64_t countEvasions(const Position& pos, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins)
+{
+    unsigned long src;
+
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
+    unsigned long kingSq = static_cast<unsigned long>(_tzcnt_u64(pos.k & our));
+
+    uint64_t count = __popcnt64(kmoves[kingSq] & ~our & ~pArea);
+
+    if (checkers & (checkers - 1)) return count; // Double check, only king moves
+
+    uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
+    uint64_t movable = our & ~anyPins;
+    uint64_t empty = ~occ;
+
+    unsigned long checkerSq = static_cast<unsigned long>(_tzcnt_u64(checkers));
+
+    // The squares between the king and a sliding checker are where their attacks intersect
+    uint64_t between = 0;
+    if (checkers & (pos.bq | pos.rq))
+    {
+        between = (BAttacks[kingSq][0] & checkers) ?
+            bmoves(kingSq, occ) & bmoves(checkerSq, occ) :
+            rmoves(kingSq, occ) & rmoves(checkerSq, occ);
+    }
+    uint64_t targets = checkers | between;
+
+    // Pawns. Promotions are four moves each, and one is counted with the other moves.
+    uint64_t pawns = pos.p & movable;
+    uint64_t pushingPawns = pawns & ((C == White) ? (empty << 8) & (targets << 8) : (empty >> 8) & (targets >> 8));
+    uint64_t doublePushingPawns = pawns & ((C == White) ?
+        0x00ff000000000000 & (empty << 8) & (empty << 16) & (targets << 16) :
+        0x000000000000ff00 & (empty >> 8) & (empty >> 16) & (targets >> 16));
+    uint64_t westCapturingPawns = pawns & 0xfefefefefefefefe & ((C == White) ? (checkers << 9) : (checkers >> 7));
+    uint64_t eastCapturingPawns = pawns & 0x7f7f7f7f7f7f7f7f & ((C == White) ? (checkers << 7) : (checkers >> 9));
+
+    count += __popcnt64(pushingPawns) + __popcnt64(doublePushingPawns) +
+        __popcnt64(westCapturingPawns) + __popcnt64(eastCapturingPawns);
+
+    constexpr uint64_t PromotionRank = (C == White) ? 0x000000000000ff00 : 0x00ff000000000000;
+    if (pawns & PromotionRank)
+    {
+        count += 3 * (__popcnt64(pushingPawns & PromotionRank) +
+            __popcnt64(westCapturingPawns & PromotionRank) +
+            __popcnt64(eastCapturingPawns & PromotionRank));
+    }
+
+    // En passant resolves the check only when the captured pawn is the checker
+    if (pos.state & EPValid)
+    {
+        unsigned long epSq = static_cast<unsigned long>((pos.state >> 5) & 63);
+        if (checkers & ((C == White) ? (1ULL << (epSq + 8)) : (1ULL << (epSq - 8))))
+        {
+            count += __popcnt64((C == White) ?
+                (pawns & 0xfefefefefefefefe & (1ULL << (epSq + 9))) | (pawns & 0x7f7f7f7f7f7f7f7f & (1ULL << (epSq + 7))) :
+                (pawns & 0xfefefefefefefefe & (1ULL << (epSq - 7))) | (pawns & 0x7f7f7f7f7f7f7f7f & (1ULL << (epSq - 9))));
+        }
+    }
+
+    // Knights
+    uint64_t pcs = pos.n & movable;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        count += __popcnt64(nmoves[src] & targets);
+        pcs &= (pcs - 1);
+    }
+
+    // Sliders
+    pcs = pos.bq & movable;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        count += __popcnt64(bmoves(src, occ) & targets);
+        pcs &= (pcs - 1);
+    }
+
+    pcs = pos.rq & movable;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        count += __popcnt64(rmoves(src, occ) & targets);
+        pcs &= (pcs - 1);
+    }
+
+    return count;
+}
+
+template uint64_t countEvasions<White>(const Position& pos, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins);
+template uint64_t countEvasions<Black>(const Position& pos, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins);
+
+template Move* generateEvasions<White>(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins);
+template Move* generateEvasions<Black>(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins);
+
 Move* generateCheckEvasions(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins)
 {
     stack = generateK(pos, stack, occ, pArea);
