@@ -122,10 +122,21 @@ public:
 
     static void initHashKeys();
     static uint64_t calcHash(const Position& pos);
-    static const Hashes& hashSquare(unsigned long sq) { assert(hashesReady); return hashKeys[sq]; }
-    static uint64_t hashTurn() { assert(hashesReady); return hashKeys[0].state; }
-    static uint64_t hashCastling(uint64_t oldState, uint64_t newState);
-    static uint64_t hashEP(uint64_t oldState, uint64_t newState);
+
+    // The keys of a square as an array indexed by piece type - 1 (pawn to king), followed by the white key
+    static const uint64_t* squareKeys(unsigned long sq) { assert(hashesReady); return &hashKeys[sq].p; }
+
+    // The keys for the turn, castling rights, and en passant square in the state
+    static uint64_t stateHash(uint64_t state)
+    {
+        assert(hashesReady);
+        uint64_t hash = stateKeys[state & 0x1f]; // Turn and castling rights
+        if (state & EPValid)
+        {
+            hash ^= hashKeys[(state >> 5) & 63].state ^ hashKeys[11].state; // EP squares are 16-23 or 40-47, so they don't overlap 0-4 and 11
+        }
+        return hash;
+    }
 private:
     uint32_t mapToIndex(uint64_t hash);
     int64_t replacementPolicy(const HashEntry& currentEntry, const HashEntry& candidateEntry);
@@ -138,6 +149,7 @@ private:
     uint32_t m_sizeExp;
     
     static Hashes hashKeys[64];
+    static uint64_t stateKeys[32];
     static bool hashesReady;
 };
 

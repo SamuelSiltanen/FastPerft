@@ -24,6 +24,7 @@ bool HashEntry::posEqual(const Position& pos)
 #endif
 
 HashTable::Hashes HashTable::hashKeys[64];
+uint64_t HashTable::stateKeys[32];
 bool HashTable::hashesReady = false;
 
 static_assert(sizeof(std::atomic<uint64_t>) == sizeof(uint64_t), "64-bit atomics must have no overhead");
@@ -212,6 +213,8 @@ int64_t HashTable::replacementPolicy(const HashEntry& currentEntry, const HashEn
 
 uint64_t HashTable::calcHash(const Position& pos)
 {
+    assert(hashesReady);
+
     uint64_t hash = 0;
     unsigned long sq = 0;
 
@@ -257,48 +260,15 @@ uint64_t HashTable::calcHash(const Position& pos)
         pcs ^= (1ULL << sq);
     }
 
-    if (pos.state & TurnWhite) hash ^= hashKeys[0].state;
-    if (pos.state & CastlingWhiteShort) hash ^= hashKeys[1].state;
-    if (pos.state & CastlingWhiteLong) hash ^= hashKeys[2].state;
-    if (pos.state & CastlingBlackShort) hash ^= hashKeys[3].state;
-    if (pos.state & CastlingBlackLong) hash ^= hashKeys[4].state;
-
-    if (pos.state & EPValid)
+    pcs = pos.w & (pos.p | pos.n | pos.bq | pos.rq | pos.k);
+    while (_BitScanForward64(&sq, pcs))
     {
-        uint64_t EPSquare = (pos.state >> 5) & 63;
-        hash ^= hashKeys[EPSquare].state; // This is OK, because EPSquare is always 16-23 or 40-47
-        hash ^= hashKeys[11].state;
+        hash ^= hashKeys[sq].w;
+        pcs ^= (1ULL << sq);
     }
 
-    return hash;
-}
+    hash ^= stateHash(pos.state);
 
-uint64_t HashTable::hashCastling(uint64_t oldState, uint64_t newState)
-{
-    assert(hashesReady);
-
-    uint64_t hash = 0;
-    if ((oldState ^ newState) & 0x000000000000001e)
-    {
-        if ((oldState ^ newState) & CastlingWhiteShort) hash ^= hashKeys[1].state;
-        if ((oldState ^ newState) & CastlingWhiteLong) hash ^= hashKeys[2].state;
-        if ((oldState ^ newState) & CastlingBlackShort) hash ^= hashKeys[3].state;
-        if ((oldState ^ newState) & CastlingBlackLong) hash ^= hashKeys[4].state;
-    }
-    return hash;
-}
-
-uint64_t HashTable::hashEP(uint64_t oldState, uint64_t newState)
-{
-    assert(hashesReady);
-
-    uint64_t hash = 0;
-    if ((oldState ^ newState) & EPValid) hash ^= hashKeys[11].state;
-    if ((oldState ^ newState) & 0x00000000000007e0)
-    {
-        if (oldState & EPValid) hash ^= hashKeys[(oldState >> 5) & 63].state;
-        if (newState & EPValid) hash ^= hashKeys[(newState >> 5) & 63].state;
-    }
     return hash;
 }
 
@@ -319,6 +289,16 @@ void HashTable::initHashKeys()
         hashKeys[i].k = generator();
         hashKeys[i].w = generator();
         hashKeys[i].state = generator();
+    }
+
+    // Turn (bit 0) and castling rights (bits 1-4) use the state keys of squares 0-4
+    for (int bits = 0; bits < 32; ++bits)
+    {
+        stateKeys[bits] = 0;
+        for (int i = 0; i < 5; ++i)
+        {
+            if (bits & (1 << i)) stateKeys[bits] ^= hashKeys[i].state;
+        }
     }
 
     hashesReady = true;

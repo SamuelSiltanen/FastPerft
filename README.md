@@ -34,7 +34,7 @@ The features are selected at compile time in `Config.hpp`:
 
   `LEAF_NODE_BULK_COUNT` Count the moves at the second to last level instead of making them (see Design). Enabled by default.
 
-  `HASH_TABLE` Store node counts of subtrees in a hash table. Enabled by default. Note that when enabled, the moves are made with a version of `make` that also updates the hash key, and it is slower than the version used without the hash table. So with `-h -1`, the speed is about 10 % lower than when compiled without the hash table.
+  `HASH_TABLE` Store node counts of subtrees in a hash table. Enabled by default. When enabled, `make` also updates the hash key, even if the hash table is disabled with `-h -1`. So with `-h -1`, the speed is about 5-10 % lower than when compiled without the hash table.
 
   `COLLECT_STATS` Collect stats about captures, en passants, castlings, checkmates, and hash table use. Disabled by default.
 
@@ -46,9 +46,9 @@ On an Intel Core i7-9700K (8 cores, no hyper-threading). The times don't include
 
 | Position | Depth | Nodes | 1 thread, no hash table | 8 threads, no hash table | 1 thread, hash table | 8 threads, hash table (default) |
 |---|---|---|---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 4.9 s | 0.68 s | 1.6 s | 0.22 s |
-| Initial position | 8 | 84 998 978 956 | | 17.9 s | | 2.7 s |
-| Kiwipete | 6 | 8 031 647 685 | 7.9 s | 1.06 s | 3.0 s | 0.40 s |
+| Initial position | 7 | 3 195 901 860 | 4.5 s | 0.62 s | 1.5 s | 0.21 s |
+| Initial position | 8 | 84 998 978 956 | | 17.2 s | | 2.7 s |
+| Kiwipete | 6 | 8 031 647 685 | 7.6 s | 1.01 s | 2.9 s | 0.39 s |
 
 The multithreading scales almost linearly with the number of cores. Kiwipete at depth 6, compiled without the hash table:
 
@@ -91,7 +91,7 @@ The protection area (all squares attacked by the opponent) is computed for each 
 
 When the king is in check by a single piece, the other pieces can only capture the checker or block the check. These moves are generated with a target mask, which contains the checker and the squares between it and the king. The squares in between are where the attacks of the king and the checker intersect. Pinned pieces cannot resolve a check, so they are skipped. When in double check, only king moves are possible.
 
-Making a move copies the position and updates it. Without the hash table, the piece bitboards are updated with AVX2 instructions using a table that tells which bitboards each piece type occupies, and castling rights are updated with per-square masks, so that only the special moves (en passant, double pawn moves, promotions, and castling) need branches. With the hash table, a separate version of `make` also updates the hash key incrementally.
+Making a move copies the position and updates it. The piece bitboards are updated with AVX2 instructions using a table that tells which bitboards each piece type occupies, and castling rights are updated with per-square masks, so that only the special moves (en passant, double pawn moves, promotions, and castling) need branches. With the hash table, `make` also updates the hash key incrementally: the keys of the moving and captured pieces are looked up by the piece type from the keys of the source and destination squares, and the keys of the turn, castling rights, and en passant square come from a precomputed table.
 
 ### Performance Notes
 
