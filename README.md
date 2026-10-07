@@ -30,7 +30,7 @@ The code is written for Visual Studio (MSVC) on x64 Windows, and it uses MSVC in
 
 The features are selected at compile time in `Config.hpp`:
 
-  `MULTITHREADED` Use multiple worker threads. Disabled by default. The multithreaded code in `Perft.cpp` has not been updated to the color templated `perft` and currently does not compile.
+  `MULTITHREADED` Use multiple worker threads. Disabled by default. The number of threads is set by `NumWorkerThreads` in `Perft.cpp`.
 
   `LEAF_NODE_BULK_COUNT` Count the moves at the second to last level instead of making them (see Design). Enabled by default.
 
@@ -42,12 +42,12 @@ The sliding piece attack lookup method is selected at the top of `MoveGeneration
 
 ## Performance
 
-Single-threaded without the hash table, on an Intel Core i7-9700K:
+Without the hash table, on an Intel Core i7-9700K (8 cores):
 
-| Position | Depth | Nodes | Time | Speed |
+| Position | Depth | Nodes | Single-threaded | 8 threads |
 |---|---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 4.2 s | 756 Mnps |
-| Kiwipete | 6 | 8 031 647 685 | 7.0 s | 1155 Mnps |
+| Initial position | 7 | 3 195 901 860 | 4.2 s (756 Mnps) | 0.59 s (5.4 Gnps) |
+| Kiwipete | 6 | 8 031 647 685 | 7.0 s (1155 Mnps) | 0.95 s (8.4 Gnps) |
 
 The speed depends on the position: positions with many moves per node are faster per node, because the leaf nodes are counted in bulk.
 
@@ -97,7 +97,7 @@ The multithreading uses a simple work stealing approach. Each worker pushes the 
 
 There could be a potential dead lock, where workers pick up each others' work, and then wait for each other to finish. To avoid this, the worker that pushes the branches in the work queue, must keep on working on those branches, and if it finishes so that there is no work left in the queue, but other workers are still processing the branches that were previously in the work queue, it must wait. This can cause some idling, but typically, this is a short time.
 
-The multithreading is currently disabled and needs updating (see Configuration).
+The multithreading is disabled by default (see Configuration). Each work queue has a fixed capacity of 256 items (`MaxWorkQueueSize` in `Perft.cpp`), which is checked only with an assert. Every level deeper than 4 (`MinWorkItemDepth`) pushes all its moves to the queue on top of the levels above it, so very deep searches in positions with many moves may need a larger queue.
 
 ### Hash Table
 

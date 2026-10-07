@@ -8,6 +8,7 @@
 #endif
 #include <cassert>
 #include <random>
+#include <thread>
 
 #if MULTITHREADED
 
@@ -149,7 +150,7 @@ uint64_t perftMultithreaded(const Position& pos, int depth, Move* stack, int thr
             {
                 const Move& move = *stack;
                 Position tmpPos = make(pos, move);
-                count += perft(tmpPos, depth - 1, stack);
+                count += (tmpPos.state & TurnWhite) ? perft<White>(tmpPos, depth - 1, stack) : perft<Black>(tmpPos, depth - 1, stack);
             }
 
             return count;
