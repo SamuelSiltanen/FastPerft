@@ -165,9 +165,9 @@ bool parseFEN(const char* fen, Position& pos)
             return false;
 
         int row = static_cast<int>(fen[i] - '1');
-        int square = file + (8 - row);
+        uint64_t square = static_cast<uint64_t>((7 - row) * 8 + file);
 
-        pos.state |= (row << 5);
+        pos.state |= (square << 5);
 
         pos.state |= EPValid;
     }
