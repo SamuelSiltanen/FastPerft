@@ -61,7 +61,9 @@ struct CastlingRookMoves
 };
 static const CastlingRookMoves castlingRookMoves;
 
-Position make(const Position& pos, const Move& move)
+// Make a move for side C
+template<Color C>
+__forceinline Position make(const Position& pos, const Move& move)
 {
     Position next = pos;
 
@@ -85,7 +87,7 @@ Position make(const Position& pos, const Move& move)
     }
     _mm256_store_si256((__m256i*)&next, pieces);
 
-    if (next.state & TurnWhite)
+    if (C == White)
     {
         next.w ^= mov;
     }
@@ -102,7 +104,7 @@ Position make(const Position& pos, const Move& move)
         // Capture EP pawn
         if ((pos.state & EPValid) && dstSq == ((pos.state >> 5) & 63))
         {
-            if (pos.state & TurnWhite)
+            if (C == White)
             {
                 next.p ^= (dst << 8);
             }
@@ -129,7 +131,7 @@ Position make(const Position& pos, const Move& move)
         {
             uint64_t rookMov = castlingRookMoves.mov[dstSq];
             next.rq ^= rookMov;
-            if (next.state & TurnWhite) next.w ^= rookMov;
+            if (C == White) next.w ^= rookMov;
         }
     }
 
@@ -137,6 +139,14 @@ Position make(const Position& pos, const Move& move)
     next.state ^= 1;
 
     return next;
+}
+
+template Position make<White>(const Position& pos, const Move& move);
+template Position make<Black>(const Position& pos, const Move& move);
+
+Position make(const Position& pos, const Move& move)
+{
+    return (pos.state & TurnWhite) ? make<White>(pos, move) : make<Black>(pos, move);
 }
 
 #else
@@ -444,5 +454,14 @@ Position make(const Position& pos, const Move& move)
 
     return next;
 }
+
+template<Color C>
+Position make(const Position& pos, const Move& move)
+{
+    return make(pos, move);
+}
+
+template Position make<White>(const Position& pos, const Move& move);
+template Position make<Black>(const Position& pos, const Move& move);
 
 #endif

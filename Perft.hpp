@@ -116,7 +116,7 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         for (--stack; stack >= stack0; --stack)
         {
             const Move& move = *stack;
-            Position tmpPos = make(pos, move);
+            Position tmpPos = make<C>(pos, move);
             count += perft<1 - C>(tmpPos, depth - 1, stack);
         }
 
