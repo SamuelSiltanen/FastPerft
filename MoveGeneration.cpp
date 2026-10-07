@@ -2090,14 +2090,14 @@ __forceinline uint64_t countP(const Position& pos, uint64_t occ, const Pins& pin
 template uint64_t countP<White>(const Position& pos, uint64_t occ, const Pins& pins);
 template uint64_t countP<Black>(const Position& pos, uint64_t occ, const Pins& pins);
 
-template<>
-uint64_t countN<Black>(const Position& pos, uint64_t occ, uint64_t anyPins)
+template<Color C>
+__forceinline uint64_t countN(const Position& pos, uint64_t occ, uint64_t anyPins)
 {
     uint64_t count = 0;
 
     unsigned long src;
 
-    uint64_t our = occ & ~pos.w;
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.n & our & ~anyPins;
     while (pcs)
     {
@@ -2110,25 +2110,8 @@ uint64_t countN<Black>(const Position& pos, uint64_t occ, uint64_t anyPins)
     return count;
 }
 
-template<>
-uint64_t countN<White>(const Position& pos, uint64_t occ, uint64_t anyPins)
-{
-    uint64_t count = 0;
-
-    unsigned long src;
-
-    uint64_t our = pos.w;
-    uint64_t pcs = pos.n & our & ~anyPins;
-    while (pcs)
-    {
-        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
-        uint64_t sqrs = nmoves[src] & ~our;
-        count += __popcnt64(sqrs);
-        pcs &= (pcs - 1);
-    }
-
-    return count;
-}
+template uint64_t countN<White>(const Position& pos, uint64_t occ, uint64_t anyPins);
+template uint64_t countN<Black>(const Position& pos, uint64_t occ, uint64_t anyPins);
 
 // Counts bishop, rook, and queen moves. Queens are counted in both the diagonal and the orthogonal pass.
 // Pinned pieces are rare, so they are handled separately and the common case has no pin checks.
@@ -2200,53 +2183,43 @@ __forceinline uint64_t countSliders(const Position& pos, uint64_t occ, const Pin
 template uint64_t countSliders<White>(const Position& pos, uint64_t occ, const Pins& pins);
 template uint64_t countSliders<Black>(const Position& pos, uint64_t occ, const Pins& pins);
 
-template<>
-uint64_t countK<Black>(const Position& pos, uint64_t occ, const uint64_t pArea)
+template<Color C>
+__forceinline uint64_t countK(const Position& pos, uint64_t occ, uint64_t pArea)
 {
-    uint64_t count = 0;
-
-    unsigned long src;
-
-    uint64_t our = occ & ~pos.w;
-    uint64_t pcs = pos.k & our;
-    src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
+    unsigned long src = static_cast<unsigned long>(_tzcnt_u64(pos.k & our));
     uint64_t sqrs = kmoves[src] & ~our & ~pArea;
-    count += __popcnt64(sqrs);
 
-    return count;
+    return __popcnt64(sqrs);
 }
 
-template<>
-uint64_t countK<White>(const Position& pos, uint64_t occ, const uint64_t pArea)
+template uint64_t countK<White>(const Position& pos, uint64_t occ, uint64_t pArea);
+template uint64_t countK<Black>(const Position& pos, uint64_t occ, uint64_t pArea);
+
+// Counts castlings. The king's start square is included in the protection area check, so this
+// also verifies that the king is not in check.
+template<Color C>
+__forceinline uint64_t countCastling(const Position& pos, uint64_t occ, uint64_t pArea)
 {
     uint64_t count = 0;
 
-    unsigned long src;
+    constexpr uint64_t ShortCastling = (C == White) ? CastlingWhiteShort : CastlingBlackShort;
+    constexpr uint64_t LongCastling = (C == White) ? CastlingWhiteLong : CastlingBlackLong;
+    constexpr uint64_t ShortKingPath = (C == White) ? 0x7000000000000000ULL : 0x0000000000000070ULL;
+    constexpr uint64_t ShortEmpty = (C == White) ? 0x6000000000000000ULL : 0x0000000000000060ULL;
+    constexpr uint64_t LongKingPath = (C == White) ? 0x1c00000000000000ULL : 0x000000000000001cULL;
+    constexpr uint64_t LongEmpty = (C == White) ? 0x0e00000000000000ULL : 0x000000000000000eULL;
 
-    uint64_t our = pos.w;
-    uint64_t pcs = pos.k & our;
-    src = static_cast<unsigned long>(_tzcnt_u64(pcs));
-    uint64_t sqrs = kmoves[src] & ~our & ~pArea;
-    count += __popcnt64(sqrs);
-
-    return count;
-}
-
-template<>
-uint64_t countCastling<Black>(const Position& pos, uint64_t occ, uint64_t pArea)
-{
-    uint64_t count = 0;
-
-    if (pos.state & CastlingBlackShort)
+    if (pos.state & ShortCastling)
     {
-        if ((pArea & 0x0000000000000070ULL) == 0 && (occ & 0x0000000000000060ULL) == 0)
+        if ((pArea & ShortKingPath) == 0 && (occ & ShortEmpty) == 0)
         {
             ++count;
         }
     }
-    if (pos.state & CastlingBlackLong)
+    if (pos.state & LongCastling)
     {
-        if ((pArea & 0x000000000000001cULL) == 0 && (occ & 0x000000000000000eULL) == 0)
+        if ((pArea & LongKingPath) == 0 && (occ & LongEmpty) == 0)
         {
             ++count;
         }
@@ -2255,28 +2228,8 @@ uint64_t countCastling<Black>(const Position& pos, uint64_t occ, uint64_t pArea)
     return count;
 }
 
-template<>
-uint64_t countCastling<White>(const Position& pos, uint64_t occ, uint64_t pArea)
-{
-    uint64_t count = 0;
-
-    if (pos.state & CastlingWhiteShort)
-    {
-        if ((pArea & 0x7000000000000000ULL) == 0 && (occ & 0x6000000000000000ULL) == 0)
-        {
-            ++count;
-        }
-    }
-    if (pos.state & CastlingWhiteLong)
-    {
-        if ((pArea & 0x1c00000000000000ULL) == 0 && (occ & 0x0e00000000000000ULL) == 0)
-        {
-            ++count;
-        }
-    }    
-
-    return count;
-}
+template uint64_t countCastling<White>(const Position& pos, uint64_t occ, uint64_t pArea);
+template uint64_t countCastling<Black>(const Position& pos, uint64_t occ, uint64_t pArea);
 
 
 
