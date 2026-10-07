@@ -643,13 +643,14 @@ void fillMoveTables()
 #endif
 }
 
-Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
+template<Color C>
+__forceinline Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
 {
     unsigned long src, dst;
 
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
 
-    if (pos.state & TurnWhite)
+    if (C == White)
     {
         uint64_t our = pos.w;
         uint64_t pcs = pos.p & our & 0x00ffffffffff0000 & (~occ << 8) & (~anyPins | pins.pinnedSN);
@@ -854,7 +855,7 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
     if (pos.state & EPValid)
     {
         uint64_t EPSquare = (pos.state >> 5) & 63;
-        if (pos.state & TurnWhite)
+        if (C == White)
         {
             uint64_t our = pos.w;
 
@@ -986,11 +987,20 @@ Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
     return stack;
 }
 
-Move* generateN(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins)
+template Move* generateP<White>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template Move* generateP<Black>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+
+Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
+{
+    return (pos.state & TurnWhite) ? generateP<White>(pos, stack, occ, pins) : generateP<Black>(pos, stack, occ, pins);
+}
+
+template<Color C>
+__forceinline Move* generateN(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins)
 {
     unsigned long src, dst;
     
-    uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.n & our & ~anyPins;
     while (pcs)
     {
@@ -1009,11 +1019,20 @@ Move* generateN(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins
     return stack;
 }
 
-Move* generateB(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
+template Move* generateN<White>(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins);
+template Move* generateN<Black>(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins);
+
+Move* generateN(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins)
+{
+    return (pos.state & TurnWhite) ? generateN<White>(pos, stack, occ, anyPins) : generateN<Black>(pos, stack, occ, anyPins);
+}
+
+template<Color C>
+__forceinline Move* generateB(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
 {
     unsigned long src, dst;
 
-    uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.bq & ~pos.rq & our & ~(pins.pinnedSN | pins.pinnedWE);
     while (pcs)
     {
@@ -1035,11 +1054,20 @@ Move* generateB(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
     return stack;
 }
 
-Move* generateR(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
+template Move* generateB<White>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template Move* generateB<Black>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+
+Move* generateB(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
+{
+    return (pos.state & TurnWhite) ? generateB<White>(pos, stack, occ, pins) : generateB<Black>(pos, stack, occ, pins);
+}
+
+template<Color C>
+__forceinline Move* generateR(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
 {
     unsigned long src, dst;
 
-    uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.rq & ~pos.bq & our & ~(pins.pinnedSENW | pins.pinnedSWNE);
     while (pcs)
     {
@@ -1061,11 +1089,20 @@ Move* generateR(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
     return stack;
 }
 
-Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
+template Move* generateR<White>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template Move* generateR<Black>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+
+Move* generateR(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
+{
+    return (pos.state & TurnWhite) ? generateR<White>(pos, stack, occ, pins) : generateR<Black>(pos, stack, occ, pins);
+}
+
+template<Color C>
+__forceinline Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
 {
     unsigned long src, dst;
 
-    uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.bq & pos.rq & our;
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
     while (pcs)
@@ -1092,11 +1129,103 @@ Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const Pins& pins
     return stack;
 }
 
-Move* generateK(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea)
+template Move* generateQ<White>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template Move* generateQ<Black>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+
+Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
+{
+    return (pos.state & TurnWhite) ? generateQ<White>(pos, stack, occ, pins) : generateQ<Black>(pos, stack, occ, pins);
+}
+
+// Generates bishop, rook, and queen moves. Queens are handled in both the diagonal and the orthogonal pass.
+// Pinned pieces are rare, so they are handled separately and the common case has no pin checks.
+template<Color C>
+__forceinline Move* generateSliders(const Position& pos, Move* stack, uint64_t occ, const Pins& pins)
 {
     unsigned long src, dst;
 
-    uint64_t our = (pos.state & TurnWhite) ? pos.w : occ & ~pos.w;
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
+    uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
+
+    // A piece on both bq and rq is a queen
+    uint64_t pcs = pos.bq & our & ~anyPins;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        Piece piece = static_cast<Piece>(Bishop + 2 * ((pos.rq >> src) & 1));
+        uint64_t sqrs = bmoves(src, occ) & ~our;
+        while (sqrs)
+        {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
+            *stack = Move(piece, src, dst);
+            ++stack;
+            sqrs &= (sqrs - 1);
+        }
+        pcs &= (pcs - 1);
+    }
+
+    pcs = pos.rq & our & ~anyPins;
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        Piece piece = static_cast<Piece>(Rook + ((pos.bq >> src) & 1));
+        uint64_t sqrs = rmoves(src, occ) & ~our;
+        while (sqrs)
+        {
+            dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
+            *stack = Move(piece, src, dst);
+            ++stack;
+            sqrs &= (sqrs - 1);
+        }
+        pcs &= (pcs - 1);
+    }
+
+    if (anyPins & (pos.bq | pos.rq))
+    {
+        // A pinned piece can only move along the pin line
+        struct PinnedLine { uint64_t pieces; bool diagonal; uint64_t (*moves)(unsigned long, uint64_t); };
+        const PinnedLine lines[4] =
+        {
+            { pos.bq & pins.pinnedSWNE, true, swneMoves },
+            { pos.bq & pins.pinnedSENW, true, senwMoves },
+            { pos.rq & pins.pinnedWE, false, weMoves },
+            { pos.rq & pins.pinnedSN, false, snMoves }
+        };
+
+        for (const PinnedLine& line : lines)
+        {
+            pcs = line.pieces;
+            while (pcs)
+            {
+                src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+                Piece piece = line.diagonal ?
+                    static_cast<Piece>(Bishop + 2 * ((pos.rq >> src) & 1)) :
+                    static_cast<Piece>(Rook + ((pos.bq >> src) & 1));
+                uint64_t sqrs = line.moves(src, occ) & ~our;
+                while (sqrs)
+                {
+                    dst = static_cast<unsigned long>(_tzcnt_u64(sqrs));
+                    *stack = Move(piece, src, dst);
+                    ++stack;
+                    sqrs &= (sqrs - 1);
+                }
+                pcs &= (pcs - 1);
+            }
+        }
+    }
+
+    return stack;
+}
+
+template Move* generateSliders<White>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template Move* generateSliders<Black>(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+
+template<Color C>
+__forceinline Move* generateK(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea)
+{
+    unsigned long src, dst;
+
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
     uint64_t pcs = pos.k & our;
     src = static_cast<unsigned long>(_tzcnt_u64(pcs));
     uint64_t sqrs = kmoves[src] & ~our & ~pArea;
@@ -1111,9 +1240,18 @@ Move* generateK(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea)
     return stack;
 }
 
-Move* generateCastling(const Position& pos, Move* stack,  uint64_t occ, uint64_t pArea)
+template Move* generateK<White>(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea);
+template Move* generateK<Black>(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea);
+
+Move* generateK(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea)
 {
-    if (pos.state & TurnWhite)
+    return (pos.state & TurnWhite) ? generateK<White>(pos, stack, occ, pArea) : generateK<Black>(pos, stack, occ, pArea);
+}
+
+template<Color C>
+__forceinline Move* generateCastling(const Position& pos, Move* stack,  uint64_t occ, uint64_t pArea)
+{
+    if (C == White)
     {
         if (pos.state & CastlingWhiteShort)
         {
@@ -1153,6 +1291,14 @@ Move* generateCastling(const Position& pos, Move* stack,  uint64_t occ, uint64_t
     }
 
     return stack;
+}
+
+template Move* generateCastling<White>(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea);
+template Move* generateCastling<Black>(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea);
+
+Move* generateCastling(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea)
+{
+    return (pos.state & TurnWhite) ? generateCastling<White>(pos, stack, occ, pArea) : generateCastling<Black>(pos, stack, occ, pArea);
 }
 
 Move* generateMovesTo(const Position& pos, unsigned long dst, Move* stack, uint64_t occ, const Pins& pins)

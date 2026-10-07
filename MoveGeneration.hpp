@@ -25,12 +25,20 @@ void fillMoveTables();
 
 // Move generation, store moves in move stack
 Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template<Color> Move* generateP(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
 Move* generateN(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins);
+template<Color> Move* generateN(const Position& pos, Move* stack, uint64_t occ, uint64_t anyPins);
 Move* generateB(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template<Color> Move* generateB(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
 Move* generateR(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template<Color> Move* generateR(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
 Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template<Color> Move* generateQ(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
+template<Color> Move* generateSliders(const Position& pos, Move* stack, uint64_t occ, const Pins& pins);
 Move* generateK(const Position& pos, Move* stack, uint64_t occ, const uint64_t pArea);
+template<Color> Move* generateK(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea);
 Move* generateCastling(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea);
+template<Color> Move* generateCastling(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea);
 Move* generateMovesTo(const Position& pos, unsigned long dst, Move* stack, uint64_t occ, const Pins& pins);
 Move* generateMovesInBetween(const Position& pos, unsigned long dst, Move* stack, uint64_t occ, const Pins& pins);
 Move* generateCheckEvasions(const Position& pos, Move* stack, uint64_t occ, uint64_t pArea, uint64_t checkers, const Pins& pins);

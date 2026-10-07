@@ -102,13 +102,11 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
         }
         else
         {
-            stack = generateP(pos, stack, occ, pins);
-            stack = generateN(pos, stack, occ, pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE);
-            stack = generateB(pos, stack, occ, pins);
-            stack = generateR(pos, stack, occ, pins);
-            stack = generateQ(pos, stack, occ, pins);
-            stack = generateK(pos, stack, occ, pArea);
-            stack = generateCastling(pos, stack, occ, pArea);
+            stack = generateP<C>(pos, stack, occ, pins);
+            stack = generateN<C>(pos, stack, occ, pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE);
+            stack = generateSliders<C>(pos, stack, occ, pins);
+            stack = generateK<C>(pos, stack, occ, pArea);
+            stack = generateCastling<C>(pos, stack, occ, pArea);
         }
 
         uint64_t count = 0;
