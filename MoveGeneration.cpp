@@ -1508,217 +1508,192 @@ Move* generateCheckEvasions(const Position& pos, Move* stack, uint64_t occ, uint
     return stack;
 }
 
+// En passant captures, separate from countP because they are rare
+template<Color C>
+uint64_t countEP(const Position& pos, uint64_t occ, const Pins& pins);
+
 template<>
-uint64_t countP<Black>(const Position& pos, uint64_t occ, const Pins& pins)
+uint64_t countEP<Black>(const Position& pos, uint64_t occ, const Pins& pins)
 {
     uint64_t count = 0;
 
     unsigned long src;
 
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
+
+    uint64_t EPSquare = (pos.state >> 5) & 63;
     
-    uint64_t our = occ & ~pos.w;
-    uint64_t their = pos.w;
-    uint64_t empty = ~occ;
-    uint64_t ourPawns = pos.p & our;
-    uint64_t unblockedPawns = ourPawns & (empty >> 8) & (~anyPins | pins.pinnedSN);
+    uint64_t our = ~pos.w;
 
-    uint64_t pcs = unblockedPawns & 0x0000ffffffffff00;
-    count += __popcnt64(pcs);        
+    // Because EP removes two pieces from the same row, horizontal pins need an extra check
+    uint64_t king = pos.k & our;
+    unsigned long kingSq;
+    kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
+    bool kingOnEPRow = (kingSq >> 3) == 4;
 
-    pcs = unblockedPawns & 0x000000000000ff00 & (empty >> 16);
-    count += __popcnt64(pcs);
-        
-    uint64_t rightCapturingPawns = ourPawns & (their >> 7) & (~anyPins | pins.pinnedSWNE);
-        
-    pcs = rightCapturingPawns & 0x0000fefefefefe00;
-    count += __popcnt64(pcs);
-        
-    uint64_t leftCapturingPawns = ourPawns & (their >> 9) & (~anyPins | pins.pinnedSENW);
-
-    pcs = leftCapturingPawns & 0x00007f7f7f7f7f00;
-    count += __popcnt64(pcs);
-
-    // Promotions (also capturing)
-    pcs = unblockedPawns & 0x00ff000000000000;
-    count += __popcnt64(pcs) * 4;
-        
-    pcs = rightCapturingPawns & 0x00fe000000000000;
-    count += __popcnt64(pcs) * 4;
-
-    pcs = leftCapturingPawns & 0x007f000000000000;
-    count += __popcnt64(pcs) * 4;
-
-    // En passant
-    if (pos.state & EPValid)
+    uint64_t pcs = pos.p & our & 0xfefefefefefefefeULL & (1ULL << (EPSquare - 7)) & (~anyPins | pins.pinnedSWNE);
+    while (pcs)
     {
-        uint64_t EPSquare = (pos.state >> 5) & 63;
-        
-        uint64_t our = ~pos.w;
-
-        // Because EP removes two pieces from the same row, horizontal pins need an extra check
-        uint64_t king = pos.k & our;
-        unsigned long kingSq;
-        kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
-        bool kingOnEPRow = (kingSq >> 3) == 4;
-
-        uint64_t pcs = pos.p & our & 0xfefefefefefefefeULL & (1ULL << (EPSquare - 7)) & (~anyPins | pins.pinnedSWNE);
-        while (pcs)
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        if (kingOnEPRow)
         {
-            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
-            if (kingOnEPRow)
+            uint64_t left = rays[src - 1].W & occ;
+            uint64_t right = rays[src].E & occ;
+
+            unsigned long hit;
+            if (_BitScanReverse64(&hit, left) && (hit == kingSq))
             {
-                uint64_t left = rays[src - 1].W & occ;
-                uint64_t right = rays[src].E & occ;
-
-                unsigned long hit;
-                if (_BitScanReverse64(&hit, left) && (hit == kingSq))
-                {
-                    if (_BitScanForward64(&hit, right) && ((1ULL << hit) & pos.rq & ~our)) break;
-                }
-                else if (_BitScanForward64(&hit, right) && (hit == kingSq))
-                {
-                    if (_BitScanReverse64(&hit, left) && ((1ULL << hit) & pos.rq & ~our)) break;
-                }
+                if (_BitScanForward64(&hit, right) && ((1ULL << hit) & pos.rq & ~our)) break;
             }
-
-            ++count;
-            break;
+            else if (_BitScanForward64(&hit, right) && (hit == kingSq))
+            {
+                if (_BitScanReverse64(&hit, left) && ((1ULL << hit) & pos.rq & ~our)) break;
+            }
         }
 
-        pcs = pos.p & our & 0x7f7f7f7f7f7f7f7fULL & (1ULL << (EPSquare - 9)) & (~anyPins | pins.pinnedSENW);
-        while (pcs)
+        ++count;
+        break;
+    }
+
+    pcs = pos.p & our & 0x7f7f7f7f7f7f7f7fULL & (1ULL << (EPSquare - 9)) & (~anyPins | pins.pinnedSENW);
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        if (kingOnEPRow)
         {
-            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
-            if (kingOnEPRow)
+            uint64_t left = rays[src].W & occ;
+            uint64_t right = rays[src + 1].E & occ;
+
+            unsigned long hit;
+            if (_BitScanReverse64(&hit, left) && (hit == kingSq))
             {
-                uint64_t left = rays[src].W & occ;
-                uint64_t right = rays[src + 1].E & occ;
-
-                unsigned long hit;
-                if (_BitScanReverse64(&hit, left) && (hit == kingSq))
-                {
-                    if (_BitScanForward64(&hit, right) && ((1ULL << hit) & pos.rq & ~our)) break;
-                }
-                else if (_BitScanForward64(&hit, right) && (hit == kingSq))
-                {
-                    if (_BitScanReverse64(&hit, left) && ((1ULL << hit) & pos.rq & ~our)) break;
-                }
+                if (_BitScanForward64(&hit, right) && ((1ULL << hit) & pos.rq & ~our)) break;
             }
-
-            ++count;
-            break;
+            else if (_BitScanForward64(&hit, right) && (hit == kingSq))
+            {
+                if (_BitScanReverse64(&hit, left) && ((1ULL << hit) & pos.rq & ~our)) break;
+            }
         }
+
+        ++count;
+        break;
     }
 
     return count;
 }
 
 template<>
-uint64_t countP<White>(const Position& pos, uint64_t occ, const Pins& pins)
+uint64_t countEP<White>(const Position& pos, uint64_t occ, const Pins& pins)
 {
     uint64_t count = 0;
 
     unsigned long src;
 
     uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
-   
+
+    uint64_t EPSquare = (pos.state >> 5) & 63;
+    
     uint64_t our = pos.w;
-    uint64_t their = occ & ~pos.w;
-    uint64_t empty = ~occ;
-    uint64_t ourPawns = pos.p & our;
-    uint64_t unblockedPawns = ourPawns & (empty << 8) & (~anyPins | pins.pinnedSN);
 
-    uint64_t pcs = unblockedPawns & 0x00ffffffffff0000;
-    count += __popcnt64(pcs);
+    // Because EP removes two pieces from the same row, horizontal pins need an extra check
+    uint64_t king = pos.k & our;
+    unsigned long kingSq;
+    kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
+    bool kingOnEPRow = (kingSq >> 3) == 3;
 
-    pcs = unblockedPawns & 0x00ff000000000000 & (empty << 16);
-    count += __popcnt64(pcs);
-
-    uint64_t leftCapturingPawns = ourPawns & (their << 9) & (~anyPins | pins.pinnedSENW);
-
-    pcs = leftCapturingPawns & 0x00fefefefefe0000;
-    count += __popcnt64(pcs);
-
-    uint64_t rightCapturingPawns = ourPawns & (their << 7) & (~anyPins | pins.pinnedSWNE);
-
-    pcs = rightCapturingPawns & 0x007f7f7f7f7f0000;
-    count += __popcnt64(pcs);
-
-    // Promotions (also capturing)
-    pcs = unblockedPawns & 0x000000000000ff00;
-    count += __popcnt64(pcs) * 4;
-
-    pcs = leftCapturingPawns & 0x000000000000fe00;
-    count += __popcnt64(pcs) * 4;
-
-    pcs = rightCapturingPawns & 0x0000000000007f00;
-    count += __popcnt64(pcs) * 4;
-
-    // En passant
-    if (pos.state & EPValid)
+    uint64_t pcs = pos.p & our & 0xfefefefefefefefeULL & (1ULL << (EPSquare + 9)) & (~anyPins | pins.pinnedSENW);
+    while (pcs) // Use while instead if to avoid goto-statement (see breaks below)
     {
-        uint64_t EPSquare = (pos.state >> 5) & 63;
-        
-        uint64_t our = pos.w;
-
-        // Because EP removes two pieces from the same row, horizontal pins need an extra check
-        uint64_t king = pos.k & our;
-        unsigned long kingSq;
-        kingSq = static_cast<unsigned long>(_tzcnt_u64(king));
-        bool kingOnEPRow = (kingSq >> 3) == 3;
-
-        uint64_t pcs = pos.p & our & 0xfefefefefefefefeULL & (1ULL << (EPSquare + 9)) & (~anyPins | pins.pinnedSENW);
-        while (pcs) // Use while instead if to avoid goto-statement (see breaks below)
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        if (kingOnEPRow)
         {
-            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
-            if (kingOnEPRow)
+            uint64_t left = rays[src - 1].W & occ;
+            uint64_t right = rays[src].E & occ;
+
+            unsigned long hit;
+            if (_BitScanReverse64(&hit, left) && (hit == kingSq))
             {
-                uint64_t left = rays[src - 1].W & occ;
-                uint64_t right = rays[src].E & occ;
-
-                unsigned long hit;
-                if (_BitScanReverse64(&hit, left) && (hit == kingSq))
-                {
-                    if (_BitScanForward64(&hit, right) && ((1ULL << hit) & pos.rq & ~our)) break;
-                }
-                else if (_BitScanForward64(&hit, right) && (hit == kingSq))
-                {
-                    if (_BitScanReverse64(&hit, left) && ((1ULL << hit) & pos.rq & ~our)) break;
-                }
+                if (_BitScanForward64(&hit, right) && ((1ULL << hit) & pos.rq & ~our)) break;
             }
-
-            ++count;
-            break;
+            else if (_BitScanForward64(&hit, right) && (hit == kingSq))
+            {
+                if (_BitScanReverse64(&hit, left) && ((1ULL << hit) & pos.rq & ~our)) break;
+            }
         }
 
-        pcs = pos.p & our & 0x7f7f7f7f7f7f7f7fULL & (1ULL << (EPSquare + 7)) & (~anyPins | pins.pinnedSWNE);
-        while (pcs)
+        ++count;
+        break;
+    }
+
+    pcs = pos.p & our & 0x7f7f7f7f7f7f7f7fULL & (1ULL << (EPSquare + 7)) & (~anyPins | pins.pinnedSWNE);
+    while (pcs)
+    {
+        src = static_cast<unsigned long>(_tzcnt_u64(pcs));
+        if (kingOnEPRow)
         {
-            src = static_cast<unsigned long>(_tzcnt_u64(pcs));
-            if (kingOnEPRow)
+            uint64_t left = rays[src].W & occ;
+            uint64_t right = rays[src + 1].E & occ;
+
+            unsigned long hit;
+            if (_BitScanReverse64(&hit, left) && (hit == kingSq))
             {
-                uint64_t left = rays[src].W & occ;
-                uint64_t right = rays[src + 1].E & occ;
-
-                unsigned long hit;
-                if (_BitScanReverse64(&hit, left) && (hit == kingSq))
-                {
-                    if (_BitScanForward64(&hit, right) && ((1ULL << hit) & pos.rq & ~our)) break;
-                }
-                else if (_BitScanForward64(&hit, right) && (hit == kingSq))
-                {
-                    if (_BitScanReverse64(&hit, left) && ((1ULL << hit) & pos.rq & ~our)) break;
-                }
+                if (_BitScanForward64(&hit, right) && ((1ULL << hit) & pos.rq & ~our)) break;
             }
-
-            ++count;
-            break;
+            else if (_BitScanForward64(&hit, right) && (hit == kingSq))
+            {
+                if (_BitScanReverse64(&hit, left) && ((1ULL << hit) & pos.rq & ~our)) break;
+            }
         }
+
+        ++count;
+        break;
     }
 
     return count;
 }
+
+template<Color C>
+__forceinline uint64_t countP(const Position& pos, uint64_t occ, const Pins& pins)
+{
+    uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
+
+    uint64_t our = (C == White) ? pos.w : occ & ~pos.w;
+    uint64_t their = occ & ~our;
+    uint64_t empty = ~occ;
+    uint64_t ourPawns = pos.p & our;
+
+    // Pawns are never on the first or last rank, so only the file edges need masking.
+    // West captures go towards the a-file and east captures towards the h-file.
+    uint64_t unblockedPawns = ourPawns & ((C == White) ? (empty << 8) : (empty >> 8)) & (~anyPins | pins.pinnedSN);
+    uint64_t doublePushPawns = unblockedPawns &
+        ((C == White) ? (0x00ff000000000000 & (empty << 16)) : (0x000000000000ff00 & (empty >> 16)));
+    uint64_t westCapturingPawns = ourPawns & 0xfefefefefefefefe &
+        ((C == White) ? ((their << 9) & (~anyPins | pins.pinnedSENW)) : ((their >> 7) & (~anyPins | pins.pinnedSWNE)));
+    uint64_t eastCapturingPawns = ourPawns & 0x7f7f7f7f7f7f7f7f &
+        ((C == White) ? ((their << 7) & (~anyPins | pins.pinnedSWNE)) : ((their >> 9) & (~anyPins | pins.pinnedSENW)));
+
+    uint64_t count = __popcnt64(unblockedPawns) + __popcnt64(doublePushPawns) +
+        __popcnt64(westCapturingPawns) + __popcnt64(eastCapturingPawns);
+
+    // Promotions (also capturing) are four moves each, and one was already counted above
+    constexpr uint64_t PromotionRank = (C == White) ? 0x000000000000ff00 : 0x00ff000000000000;
+    if (ourPawns & PromotionRank)
+    {
+        count += 3 * (__popcnt64(unblockedPawns & PromotionRank) +
+            __popcnt64(westCapturingPawns & PromotionRank) +
+            __popcnt64(eastCapturingPawns & PromotionRank));
+    }
+
+    if (pos.state & EPValid)
+    {
+        count += countEP<C>(pos, occ, pins);
+    }
+
+    return count;
+}
+
+template uint64_t countP<White>(const Position& pos, uint64_t occ, const Pins& pins);
+template uint64_t countP<Black>(const Position& pos, uint64_t occ, const Pins& pins);
 
 template<>
 uint64_t countN<Black>(const Position& pos, uint64_t occ, uint64_t anyPins)
