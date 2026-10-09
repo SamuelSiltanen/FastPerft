@@ -76,11 +76,11 @@ On an NVIDIA GeForce RTX 2070 Super:
 |---|---|---|---|
 | Initial position | 7 | 3 195 901 860 | 0.020 s (159.4 Gnps) |
 | Initial position | 8 | 84 998 978 956 | 0.151 s (562.9 Gnps) |
-| Initial position | 9 | 2 439 530 234 167 | 1.80 s (1354.5 Gnps) |
-| Initial position | 10 | 69 352 859 712 417 | 27.6 s (2515.3 Gnps) |
+| Initial position | 9 | 2 439 530 234 167 | 1.78 s (1370.5 Gnps) |
+| Initial position | 10 | 69 352 859 712 417 | 27.1 s (2561.5 Gnps) |
 | Kiwipete | 6 | 8 031 647 685 | 0.034 s (235.7 Gnps) |
-| Kiwipete | 7 | 374 190 009 323 | 0.408 s (917.1 Gnps) |
-| Kiwipete | 8 | 15 493 944 087 984 | 12.8 s (1211.3 Gnps) |
+| Kiwipete | 7 | 374 190 009 323 | 0.398 s (940.2 Gnps) |
+| Kiwipete | 8 | 15 493 944 087 984 | 12.2 s (1270.0 Gnps) |
 
 The GPU hash table has 128-bit keys (`WideHashKeys` in `GpuPerft.cu`). With 64-bit keys, the large searches are 15-30% faster, but a false match in the hash table is much more likely (see `GPU_PLAN.md`). The positions are stored on the GPU in 32 bytes (see `GpuPosition` in `GpuPerft.cu`). The times don't include the initialization of the GPU, and the GPU wasn't used by other programs at the same time. As with the CPU hash table, the speed includes the subtrees found in the hash table and the merged duplicates.
 

@@ -61,6 +61,7 @@ constexpr int MinHashDepth = 2; // Depth-1 counts are faster to calculate than t
 constexpr uint64_t HashCountMask = (1ULL << 56) - 1; // The count is in the low 56 bits of the data, and the depth in the high 8 bits
 constexpr uint64_t UnknownCount = ~0ULL;
 constexpr int MinMergeDepth = LeafDepth + 1; // Merging the leaf level costs more than it saves, and the hash table finds most of its duplicates
+constexpr bool DeferChecks = true; // Count the children in check after the others in the depth 2 leaf search, so that the warps don't diverge on them
 constexpr bool SortLeavesByMoves = true; // Sort the leaf positions by their number of moves, so that the threads of a warp have similar work
 
 static_assert(LeafDepth >= 1 && LeafDepth <= 3 && LeafDepth <= MaxGpuDepth, "Unsupported leaf depth");
@@ -144,12 +145,60 @@ __device__ __forceinline__ Move* generateMoves(const Position& pos, Move* moves)
 
 // Depth-first perft of one position in one thread. The depth is a template parameter, so that the recursion
 // is unrolled at compile time. The last ply is counted in bulk.
+// Depth 2 perft of one position in one thread. A child in check is counted with countEvasions, while the others
+// are counted with the normal move counting. If the children of the threads of a warp were counted in the same loop,
+// the warp would run both paths whenever any of its threads had a child in check. So the children in check are only
+// recorded in the first loop, and counted in a second loop, which recalculates their pins and checkers.
+template<Color C>
+__device__ uint64_t perftDepth2DeferringChecks(const Position& pos)
+{
+    constexpr Color O = opponent(C);
+
+    Move moves[MaxMoves];
+    int numMoves = static_cast<int>(generateMoves<C>(pos, moves) - moves);
+
+    uint8_t inCheck[MaxMoves];
+    int numInCheck = 0;
+    uint64_t count = 0;
+    for (int i = 0; i < numMoves; ++i)
+    {
+        Position child = make<C>(pos, moves[i]);
+        uint64_t occ = child.p | child.n | child.bq | child.rq | child.k;
+        Pins pins;
+        if (findPinsAndCheckers<O>(child, occ, pins))
+        {
+            inCheck[numInCheck++] = static_cast<uint8_t>(i);
+            continue;
+        }
+        uint64_t pArea = findProtectionArea<O>(child, occ);
+        uint64_t anyPins = pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE;
+        count += countP<O>(child, occ, pins) + countN<O>(child, occ, anyPins) + countSliders<O>(child, occ, pins) +
+            countK<O>(child, occ, pArea) + countCastling<O>(child, occ, pArea);
+    }
+
+    for (int i = 0; i < numInCheck; ++i)
+    {
+        Position child = make<C>(pos, moves[inCheck[i]]);
+        uint64_t occ = child.p | child.n | child.bq | child.rq | child.k;
+        Pins pins;
+        uint64_t checkers = findPinsAndCheckers<O>(child, occ, pins);
+        uint64_t pArea = findProtectionArea<O>(child, occ);
+        count += countEvasions<O>(child, occ, pArea, checkers, pins);
+    }
+
+    return count;
+}
+
 template<Color C, int Depth>
 __device__ uint64_t perftThread(const Position& pos)
 {
     if constexpr (Depth == 1)
     {
         return countMoves<C>(pos);
+    }
+    else if constexpr (Depth == 2 && DeferChecks)
+    {
+        return perftDepth2DeferringChecks<C>(pos);
     }
     else
     {

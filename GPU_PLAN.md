@@ -238,6 +238,20 @@ The GPU buffers store `GpuPosition` (48 bytes) instead of `Position` (64 bytes):
 - The bucket comes from the high 64 bits of `key2 * numBuckets` (`__umul64hi`), so the number of buckets can be anything. The table takes the free GPU memory after the other buffers, minus a reserve of 1 GB, up to `MaxHashTableBytes`.
 - The table from the free memory is a problem if other programs use the GPU at the same time: with another program on the GPU, initial position depth 10 took 66-100 s instead of 27.6 s, probably because the GPU was shared and its memory overcommitted.
 
+### Less divergence in the leaf search
+
+The depth 2 leaf search counts the children in check after the others (`DeferChecks`, `perftDepth2DeferringChecks`). The first loop counts the children that aren't in check, and only records the ones in check, and the second loop makes them again and counts them with `countEvasions`. If only a few percent of the children are in check, a warp of 32 threads still has one in most iterations, and then all its threads waited for the evasion counting.
+
+| Variant | Initial position depth 9 / 10, Kiwipete depth 7 / 8, position 6 depth 7 |
+|---|---|
+| Before | 1.80 / 27.6 s, 0.408 / 12.79 s, 0.291 s |
+| Children in check counted after the others | 1.78 / 27.1 s, 0.398 / 12.20 s, 0.278 s |
+| + leaf positions in check sorted together (rejected) | 1.78 / 27.2 s, 0.395 / 12.29 s, 0.282 s |
+
+- Nsight Compute (Kiwipete depth 7): 27.3 of 32 threads active per instruction instead of 25.1, instruction cache stalls 24% instead of 27%, short scoreboard stalls 13% instead of 18%.
+- Upper bounds, measured with wrong counts: without the en passant counting of the children, the search would be about 1% faster, and without their pins 5-7%. Deferring the pinned children would recalculate a large share of the children, so it was not tried.
+- Sorting the leaf positions in check together (a check bit in the sort key) made no difference, since they're rare.
+
 The hybrid search (the CPU walks the top of the tree with its hash table) is not implemented. The GPU already handles the transpositions below the CPU levels, by merging within a batch and with its hash table between batches, and the CPU levels have only a few hundred thousand positions even at depth 10. Searching part of the tree on the CPU at about 8 Gnps would add less than 2% to the GPU's effective 300-900 Gnps.
 
 ## Testing and measurement
