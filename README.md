@@ -20,11 +20,15 @@ Where supported options include:
   
   `-s` Print stats of the leaf nodes: captures, en passants, castles, promotions, checks, discovered checks, double checks, and checkmates, as in https://www.chessprogramming.org/Perft_Results. This uses a slower search without bulk counting and the hash table (see Stats).
 
+  `-g` Search the last 3 plies on the GPU (see GPU). The CPU expands the tree down to them. This doesn't use the hash table.
+
 For example, `fastperft -d 6 -f "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -"` counts the nodes of the Kiwipete position at depth 6.
 
 ## Requirements
 
 The code is written for Visual Studio (MSVC) on x64 Windows, and it uses MSVC intrinsics. The CPU must support AVX2 and BMI2 (PEXT and TZCNT), i.e. Intel Haswell or newer, or AMD Zen or newer. On AMD processors before Zen 3, PEXT is very slow, so the sliding piece lookups are slow too.
+
+The GPU search needs the CUDA Toolkit 12.3 with its Visual Studio integration, and an NVIDIA GPU. The project builds for compute capability 7.5 (Turing, e.g. RTX 20 series); change `CodeGeneration` in the CUDA settings of the project for other GPUs.
 
 ## Configuration
 
@@ -35,6 +39,8 @@ The features are selected at compile time in `Config.hpp`:
   `LEAF_NODE_BULK_COUNT` Count the moves at the second to last level instead of making them (see Design). Enabled by default.
 
   `HASH_TABLE` Store node counts of subtrees in a hash table. Enabled by default. When enabled, `make` also updates the hash key, but it skips the updates if the hash table is disabled with `-h -1`.
+
+  `GPU_PERFT` Enable the GPU search with the `-g` option. Enabled by default.
 
 
 The sliding piece attack lookup method is selected at the top of `MoveTables.hpp` (`PEXT_INTRINSIC`, `KINDERGARTEN_BITBOARDS`, `MAGIC_BITBOARDS`).
@@ -59,6 +65,19 @@ The multithreading scales almost linearly with the number of cores. Kiwipete at 
 | 8 | 0.94 s | 7.4x |
 
 The speed depends on the position: positions with many moves per node are faster per node, because the leaf nodes are counted in bulk. The hash table helps more at deeper depths, where more positions are reached through different move orders.
+
+## GPU
+
+With `-g`, the CPU expands the tree down to 3 plies before the leaves, and the GPU searches the remaining subtrees, one position per GPU thread. The move generation code is shared with the CPU (`MoveGenerationImpl.hpp`, `MakeImpl.hpp`), and the GPU uses kindergarten bitboards for the sliding pieces. See `GPU_PLAN.md` for the plan and the status of the port.
+
+On an NVIDIA GeForce RTX 2070 Super:
+
+| Position | Depth | Nodes | Time |
+|---|---|---|---|
+| Initial position | 7 | 3 195 901 860 | 0.113 s (28.4 Gnps) |
+| Initial position | 8 | 84 998 978 956 | 2.31 s (36.8 Gnps) |
+| Kiwipete | 6 | 8 031 647 685 | 0.144 s (55.8 Gnps) |
+| Kiwipete | 7 | 374 190 009 323 | 4.85 s (77.2 Gnps) |
 
 ## Tests
 

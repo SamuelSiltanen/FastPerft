@@ -13,6 +13,9 @@
 #include "TestPositions.hpp"
 #include "FENParser.hpp"
 #include "Stats.hpp"
+#if GPU_PERFT
+#include "GpuPerft.hpp"
+#endif
 
 #if HASH_TABLE
 #include "HashTable.hpp"
@@ -28,12 +31,13 @@ struct PerftParams
     int hashTableSize;
     int numberOfWorkers;
     bool collectStats;
+    bool useGpu;
     Position position;
 };
 
 PerftParams parseCommandLine(int argc, char** argv);
 void printUsage();
-void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats);
+void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats, bool useGpu);
 
 int main(int argc, char** argv)
 {       
@@ -42,7 +46,7 @@ int main(int argc, char** argv)
 #if HASH_TABLE
     // The hash keys are kept up to date in make even if the hash table is disabled
     HashTable::initHashKeys();
-    if (params.hashTableSize >= 0 && !params.collectStats) // The stats search does not use the hash table
+    if (params.hashTableSize >= 0 && !params.collectStats && !params.useGpu) // The stats and GPU searches do not use the hash table
     {
         hashTable = new HashTable(params.hashTableSize);
     }
@@ -51,8 +55,19 @@ int main(int argc, char** argv)
 #endif
 
     fillMoveTables();
+
+#if GPU_PERFT
+    if (params.useGpu && !initGpuPerft())
+    {
+        return EXIT_FAILURE;
+    }
+#endif
     
-    testPerft(params.position, params.depth, params.numberOfWorkers, params.collectStats);
+    testPerft(params.position, params.depth, params.numberOfWorkers, params.collectStats, params.useGpu);
+
+#if GPU_PERFT
+    if (params.useGpu) releaseGpuPerft();
+#endif
 
 #if HASH_TABLE
     delete hashTable;
@@ -72,6 +87,7 @@ PerftParams parseCommandLine(int argc, char** argv)
 #endif
     params.numberOfWorkers = 8;
     params.collectStats = false;
+    params.useGpu = false;
     params.position = Position1;
 
     bool failure = false;
@@ -130,6 +146,11 @@ PerftParams parseCommandLine(int argc, char** argv)
         case 's':
             params.collectStats = true;
             break;
+#if GPU_PERFT
+        case 'g':
+            params.useGpu = true;
+            break;
+#endif
         case 'f':
             if (argc <= i + 1)
             {
@@ -171,12 +192,15 @@ void printUsage()
     printf("\t-s              Print stats of the leaf nodes: captures, en passants, castles,\n");
     printf("\t                promotions, checks, and checkmates. Slower, and without hash table.\n");
     printf("\t-f \"<FEN>\"    Position in FEN notation. Remember to use the quotes.\n");
+#if GPU_PERFT
+    printf("\t-g              Search the last plies on the GPU. Without hash table.\n");
+#endif
 }
 
-void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats)
+void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats, bool useGpu)
 {
 #if MULTITHREADED
-    if (!collectStats) initMultiPerft(numberOfWorkers);
+    if (!collectStats && !useGpu) initMultiPerft(numberOfWorkers);
 #endif
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -188,6 +212,12 @@ void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collect
         stats = perftStats(pos, depth, numberOfWorkers);
         count = stats.nodes;
     }
+#if GPU_PERFT
+    else if (useGpu)
+    {
+        count = runGpuPerft(pos, depth);
+    }
+#endif
     else
     {
 #if MULTITHREADED
@@ -210,6 +240,6 @@ void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collect
     }
 
 #if MULTITHREADED
-    if (!collectStats) releaseMultiPerft();
+    if (!collectStats && !useGpu) releaseMultiPerft();
 #endif
 }

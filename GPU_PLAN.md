@@ -36,7 +36,7 @@ Status: done.
 
 Findings for phase 1:
 
-- CUDA 12.3 does not support the installed MSVC (14.44). Install CUDA 12.4 or newer. Until then, nvcc needs `-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH`.
+- CUDA 12.3 does not support the VS 2022 compiler (MSVC 14.44), but the project uses the VS 2019 toolset (v142, MSVC 14.29), which works with CUDA 12.3 through MSBuild. Only a command-line nvcc build with the VS 2022 environment needs `-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH`.
 - nvcc rejects `perft<1 - C>` in `Perft.hpp` (int to `Color` template argument), so the GPU code must not include `Perft.hpp`. It has its own kernels anyway.
 - `generateSliders` handles pinned sliders through function pointers, which is an indirect call on the GPU. It's rare, but check it when profiling.
 
@@ -47,6 +47,26 @@ Findings for phase 1:
 - `-g` option in Main, behind a `GPU_PERFT` switch in `Config.hpp`.
 - Check: CPU and GPU counts match on the 6 test positions and on a few thousand random positions, compared per move (divide).
 - Expected: maybe 10-20 Gnps, limited by warp divergence and uneven subtree sizes.
+
+Status: done, and much faster than expected.
+
+- `GpuPerft.cu`: the CPU expands the tree to depth - 3 (single-threaded), and collects the positions into batches of 64k. Two batches alternate, so the CPU fills one while the GPU searches the other. Each GPU thread searches 3 plies depth first, with the depth as a template parameter, so that the recursion is unrolled at compile time. The last ply is counted in bulk, and `cub::BlockReduce` sums the counts of each block.
+- `-g` option, `GPU_PERFT` switch in `Config.hpp`. The GPU search doesn't use the hash table.
+- The CUDA build customization (12.3) is in the project, `sm_75`. `cudart_static.lib` requests `LIBCMT`, so it's ignored to match `/MD`.
+- Correctness: the 6 test positions (and the mirrored position 4) match the published values at depths up to 8, and a scratch differential test had 0 mismatches in 12,300 comparisons against the CPU (3,000 random positions from random walks, depths 1-4 and every tenth to depth 5, 158 of them in check and 156 with an en passant square).
+
+| Position | Depth | CPU, 8 threads, no hash table | CPU, 8 threads, hash table | GPU (RTX 2070 Super) |
+|---|---|---|---|---|
+| Initial position | 7 | 0.61 s (5.3 Gnps) | 0.20 s (15.9 Gnps) | 0.113 s (28.4 Gnps) |
+| Initial position | 8 | 16.2 s (5.2 Gnps) | 2.5 s (34.7 Gnps) | 2.31 s (36.8 Gnps) |
+| Kiwipete | 6 | 0.93 s (8.6 Gnps) | 0.37 s (21.6 Gnps) | 0.144 s (55.8 Gnps) |
+| Kiwipete | 7 | | | 4.85 s (77.2 Gnps) |
+
+Findings for phase 2:
+
+- The depth 3 kernel uses 255 registers, a 1472-byte stack frame, and spills 880 bytes. That allows only 2 blocks of 128 threads (8 warps) per SM, so occupancy is low. The depth 2 kernel uses 166 registers and doesn't spill. The breadth-first kernels of phase 2 have much smaller per-thread state, which should help.
+- Small searches are dominated by launch overhead and too few threads (initial position depth 5 is only 400 positions). They're not worth optimizing.
+- The CPU frontier expansion is single-threaded. At depth 8 from the initial position it creates 4.9M positions, which isn't a bottleneck yet, but it will be with a faster GPU search or a deeper split.
 
 ## Phase 2: Breadth-first kernels (Banerjee's design)
 

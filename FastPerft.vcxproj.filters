@@ -57,6 +57,9 @@
     <ClInclude Include="Platform.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="GpuPerft.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HashTable.cpp">
@@ -83,5 +86,10 @@
     <ClCompile Include="FENParser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="GpuPerft.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
   </ItemGroup>
 </Project>
