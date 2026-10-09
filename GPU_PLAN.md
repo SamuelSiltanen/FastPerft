@@ -149,6 +149,30 @@ Ideas for later: less divergence in the leaf kernel (e.g., distribute the childr
 - Deduplicate each frontier level: CUB radix sort by hash, merge duplicates, sum their multiplicities. This gets transpositions within a batch without a shared table, and is the same idea as the unique(k) enumeration needed for perft(16).
 - A lockless GPU hash table with 128-bit keys in device memory, probed at frontier levels with depth >= 2. It's designed for the perft(16) requirements from the start.
 
+Status: merging and the hash table are done, the hybrid search is not (see below). The GPU search is 2.8-7x faster than in phase 3.
+
+- Merging: before a level is searched, its positions are sorted by a 32-bit key (`cub::DeviceRadixSort`), and equal neighbors (all fields compared) are merged. Each original position is mapped to its merged position (`runOf`). Different positions with the same key only cause missed merges, never wrong counts.
+- Per-position node counts: instead of adding the leaf counts to the result, each merged position gets the node count of its subtree. After the children of a chunk are searched, each parent sums the counts of its children through the mapping (`aggregateKernel`). The batch sums its positions the same way at the end.
+- First version (merging with weights, the number of move sequences to each position, without the hash table): initial position depth 8 0.75 -> 0.306 s, Kiwipete depth 7 1.82 -> 0.908 s, position 6 depth 7 1.47 -> 0.628 s, position 3 depth 9 0.54 -> 0.064 s. Merging works only within a chunk, so the leaf level (24M positions at initial position depth 8, of which 9.4M unique) is merged only partly.
+- Hash table: 2^25 buckets of 4 entries of 16 bytes (2 GB). An entry has a 64-bit key and the depth (8 bits) and node count (56 bits), and the bucket comes from a second, independent 64-bit hash. The key is stored XORed with the data, as in the CPU table, so that a slot written by two threads at once doesn't match. Each level is probed before it's searched, at depths 2 and up, and its node counts are stored afterwards. The positions found aren't searched again.
+- At the leaf level, the positions not found are selected with `cub::DeviceSelect`, and the leaf kernel and the insertion process only them. Without that, the found positions just left idle threads in the warps, and the hash table didn't help at all.
+- A collision bug: the first position hash mixed the fields with `(h ^ (h >> 31) ^ field) * multiplier`, and perft 10 from the initial position was off by 165, deterministically. Different hash constants gave the correct count. The hash now mixes each field with the MurmurHash3 finalizer (`fmix64`). Each step is bijective, so positions that differ in one field never collide.
+- The 64-bit key and the independent bucket index make a false match about 2^-62 per probe. That's fine for these searches (billions of probes), but a perft(16) run (10^18 probes or more) needs wider entries, e.g. 32 bytes with a 128-bit key.
+- Tuning: GPU depth 6 (5 and 7 are about the same), level capacity 4M (8M is about the same), table 2 GB (4 GB is the same), batch 64k (1M is slower for perft 10). Probing only at depths 3 and up is 30-40% slower.
+- Nsight Systems, Kiwipete depth 8: leaf kernel 69%, insert 9%, merge 8.5% (gathering the positions in the sorted order), probe 4.7%, aggregate 2.7%.
+- Correctness: the test positions match the published values, the differential test (which reuses the hash table across thousands of searches) had 0 mismatches, initial position depth 10 matches the published value, and position 3 depth 9 and Kiwipete depth 8 match the CPU.
+
+| Position | Depth | Phase 3 | Phase 4 |
+|---|---|---|---|
+| Initial position | 8 | 0.758 s | 0.254 s |
+| Initial position | 9 | 19.4 s | 3.33 s |
+| Initial position | 10 | | 73.1 s |
+| Kiwipete | 7 | 1.82 s | 0.629 s |
+| Kiwipete | 8 | | 19.2 s (CPU with hash table: 270 s) |
+| Position 6 | 7 | 1.47 s | 0.472 s |
+
+The hybrid search (the CPU walks the top of the tree with its hash table) is not implemented. The GPU already handles the transpositions below the CPU levels, by merging within a batch and with its hash table between batches, and the CPU levels have only a few hundred thousand positions even at depth 10. Searching part of the tree on the CPU at about 8 Gnps would add less than 2% to the GPU's effective 300-900 Gnps.
+
 ## Testing and measurement
 
 - Reuse the Test_FastPerft positions, and add a GPU-vs-CPU differential test over random positions that reports the first move whose counts differ.

@@ -9,9 +9,14 @@
 #include "MoveGeneration.hpp"
 #include "Make.hpp"
 
+#include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_scan.cuh>
+#include <cub/device/device_select.cuh>
+#include <cub/iterator/counting_input_iterator.cuh>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <utility>
 
 #define CUDA_CHECK(call)                                                                        \
     do                                                                                          \
@@ -28,17 +33,29 @@
 // gives the offsets of their moves, one kernel generates the moves, and one kernel makes them, one thread per move.
 // The children are searched the same way, until the last LeafDepth plies, which each thread searches depth first.
 // If the children don't fit in the buffer of the next level, the positions are searched in chunks, depth first.
+//
+// Before a level is searched, its duplicate positions are merged, and the positions found in the hash table are
+// not searched again. Each position gets the node count of its subtree, which is stored in the hash table. The
+// node count of a position is the sum of the node counts of its children, through the mapping from the children
+// to the merged positions.
 namespace
 {
 
-constexpr int MaxGpuDepth = 5; // Plies searched on the GPU, the CPU expands the tree to depth - MaxGpuDepth
+constexpr int MaxGpuDepth = 6; // Plies searched on the GPU, the CPU expands the tree to depth - MaxGpuDepth
 constexpr int LeafDepth = 2; // Plies that each GPU thread searches depth first at the end, 1 to 3
 constexpr int NumLevels = MaxGpuDepth - LeafDepth + 1; // Levels of positions stored on the GPU
 constexpr int BatchSize = 64 * 1024; // Positions per batch from the CPU
-constexpr uint32_t LevelCapacity = 4 * 1024 * 1024; // Positions per level below the batch
+constexpr uint32_t LevelCapacity = 4 * 1024 * 1024; // Positions per level
 constexpr int BlockSize = 256;
 constexpr int LeafMinBlocks = 3; // Minimum blocks per SM for the leaf kernel, limits its registers
 constexpr int MaxMoves = 256; // At most 218 legal moves in any position
+
+constexpr bool UseHashTable = true;
+constexpr int HashTableSizeExp = 25; // Number of buckets as an exponent of 2. A bucket has 4 entries of 16 bytes, so 2^25 buckets take 2 GB.
+constexpr int HashBucketSize = 4;
+constexpr int MinHashDepth = 2; // Depth-1 counts are faster to calculate than to look up
+constexpr uint64_t HashCountMask = (1ULL << 56) - 1; // The count is in the low 56 bits of the data, and the depth in the high 8 bits
+constexpr uint64_t UnknownCount = ~0ULL;
 
 static_assert(LeafDepth >= 1 && LeafDepth <= 3 && LeafDepth <= MaxGpuDepth, "Unsupported leaf depth");
 static_assert(BatchSize <= LevelCapacity, "The batch must fit in a level");
@@ -102,58 +119,89 @@ __device__ uint64_t perftThread(const Position& pos)
     }
 }
 
-// Sums the counts of a warp and adds the sum to the result. A warp reduction instead of a block reduction,
-// so that the warps that finish early don't wait for the others in the block.
-__device__ __forceinline__ void addToResult(unsigned long long count, unsigned long long* result)
+// The finalizer of MurmurHash3, a bijective mix of all bits
+__device__ __forceinline__ uint64_t fmix64(uint64_t h)
 {
-    for (int offset = 16; offset > 0; offset /= 2)
-    {
-        count += __shfl_down_sync(0xffffffff, count, offset);
-    }
-    if ((threadIdx.x & 31) == 0)
-    {
-        atomicAdd(result, count);
-    }
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccdULL;
+    h ^= h >> 33;
+    h *= 0xc4ceb9fe1a85ec53ULL;
+    h ^= h >> 33;
+    return h;
 }
 
+// Hashes the position by mixing in its fields one by one. Each step is bijective, so positions that differ in only
+// one field never collide, and otherwise the mixing makes collisions as unlikely as for random keys. A weaker mix
+// of the fields caused a wrong count for perft 10 from the initial position.
+__device__ __forceinline__ uint64_t hashPosition(const Position& pos, uint64_t seed)
+{
+    uint64_t h = seed;
+    h = fmix64(h ^ pos.p);
+    h = fmix64(h ^ pos.n);
+    h = fmix64(h ^ pos.bq);
+    h = fmix64(h ^ pos.rq);
+    h = fmix64(h ^ pos.k);
+    h = fmix64(h ^ pos.w);
+    h = fmix64(h ^ pos.state);
+    return h;
+}
+
+// Two independent hashes of a position, for the hash table key and the bucket index
+__device__ __forceinline__ uint64_t hashKey(const Position& pos) { return hashPosition(pos, 0x243f6a8885a308d3ULL); }
+__device__ __forceinline__ uint64_t hashIndex(const Position& pos) { return hashPosition(pos, 0x13198a2e03707344ULL); }
+
+__device__ __forceinline__ bool samePosition(const Position& a, const Position& b)
+{
+    return a.p == b.p && a.n == b.n && a.bq == b.bq && a.rq == b.rq && a.k == b.k && a.w == b.w && a.state == b.state;
+}
+
+// Searches the positions given by the indices, or all positions if there are no indices. The number of indices
+// is read on the GPU, so that the CPU doesn't need to wait for it.
 template<Color C, int Depth>
-__global__ void __launch_bounds__(BlockSize, LeafMinBlocks) leafKernel(const Position* positions, uint32_t numPositions, unsigned long long* result)
+__global__ void __launch_bounds__(BlockSize, LeafMinBlocks) leafKernel(const Position* positions, const uint32_t* indices,
+    const uint32_t* numIndices, uint32_t numPositions, uint64_t* nodeCounts)
 {
     loadMoveTables();
 
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
-
-    unsigned long long count = 0;
-    if (index < numPositions)
+    uint32_t count = indices ? *numIndices : numPositions;
+    if (index < count)
     {
-        count = perftThread<C, Depth>(positions[index]);
+        uint32_t position = indices ? indices[index] : index;
+        nodeCounts[position] = perftThread<C, Depth>(positions[position]);
     }
-
-    addToResult(count, result);
 }
 
+// Selects the positions that weren't found in the hash table
+struct IsUnknown
+{
+    const uint64_t* nodeCounts;
+    __device__ __forceinline__ bool operator()(uint32_t index) const { return nodeCounts[index] == UnknownCount; }
+};
+
+// Counts the moves of the positions that need to be searched
 template<Color C>
-__global__ void __launch_bounds__(BlockSize) countKernel(const Position* positions, uint32_t numPositions, uint32_t* counts)
+__global__ void __launch_bounds__(BlockSize) countKernel(const Position* positions, const uint64_t* nodeCounts, uint32_t numPositions, uint32_t* counts)
 {
     loadMoveTables();
 
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numPositions)
     {
-        counts[index] = static_cast<uint32_t>(countMoves<C>(positions[index]));
+        counts[index] = (nodeCounts[index] == UnknownCount) ? static_cast<uint32_t>(countMoves<C>(positions[index])) : 0;
     }
 }
 
-// Generates the moves of the positions [begin, end) to the offsets given by the prefix sum of the move counts,
-// relative to the first one. Also stores the index of the position of each move.
+// Generates the moves of the positions [begin, end) that need to be searched to the offsets given by the prefix sum
+// of the move counts, relative to the first one. Also stores the index of the position of each move.
 template<Color C>
-__global__ void __launch_bounds__(BlockSize) generateKernel(const Position* positions, uint32_t begin, uint32_t end, const uint32_t* offsets,
-    Move* moves, uint32_t* parents)
+__global__ void __launch_bounds__(BlockSize) generateKernel(const Position* positions, const uint64_t* nodeCounts, uint32_t begin, uint32_t end,
+    const uint32_t* offsets, Move* moves, uint32_t* parents)
 {
     loadMoveTables();
 
     uint32_t index = begin + blockIdx.x * blockDim.x + threadIdx.x;
-    if (index < end)
+    if (index < end && nodeCounts[index] == UnknownCount)
     {
         uint32_t first = offsets[index] - offsets[begin];
         Move* last = generateMoves<C>(positions[index], moves + first);
@@ -175,6 +223,170 @@ __global__ void __launch_bounds__(BlockSize) makeKernel(const Position* position
     if (index < numMoves)
     {
         children[index] = make<C>(positions[parents[index]], moves[index]);
+    }
+}
+
+// Sums the node counts of the children of the positions [begin, end) that were searched. The children of a
+// position are consecutive, and childRuns maps them to the merged children.
+__global__ void aggregateKernel(uint32_t begin, uint32_t end, const uint32_t* offsets, const uint64_t* childCounts, const uint32_t* childRuns,
+    uint64_t* nodeCounts)
+{
+    uint32_t index = begin + blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < end && nodeCounts[index] == UnknownCount)
+    {
+        uint32_t first = offsets[index] - offsets[begin];
+        uint32_t last = offsets[index + 1] - offsets[begin];
+        uint64_t count = 0;
+        for (uint32_t i = first; i < last; ++i)
+        {
+            count += childCounts[childRuns[i]];
+        }
+        nodeCounts[index] = count;
+    }
+}
+
+__global__ void keyKernel(const Position* positions, uint32_t numPositions, uint32_t* keys, uint32_t* indices)
+{
+    uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < numPositions)
+    {
+        keys[index] = static_cast<uint32_t>(hashKey(positions[index]) >> 32);
+        indices[index] = index;
+    }
+}
+
+// Marks the first position of each run of equal positions in the order sorted by the keys. Different positions
+// may have the same key, so equal positions may end up in different runs, which only means that they are searched
+// more than once.
+__global__ void headKernel(const Position* positions, const uint32_t* sortedKeys, const uint32_t* sortedIndices, uint32_t numPositions,
+    uint32_t* heads)
+{
+    uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < numPositions)
+    {
+        heads[index] = (index == 0 || sortedKeys[index] != sortedKeys[index - 1] ||
+            !samePosition(positions[sortedIndices[index]], positions[sortedIndices[index - 1]])) ? 1 : 0;
+    }
+}
+
+// Stores the first position of each run, and maps all positions to their run. runs is the inclusive prefix sum
+// of the heads, so it gives the index of the run, plus one.
+__global__ void mergeKernel(const Position* positions, const uint32_t* sortedIndices, const uint32_t* heads, const uint32_t* runs,
+    uint32_t numPositions, Position* runPositions, uint32_t* runOf)
+{
+    uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < numPositions)
+    {
+        uint32_t source = sortedIndices[index];
+        uint32_t run = runs[index] - 1;
+        if (heads[index])
+        {
+            runPositions[run] = positions[source];
+        }
+        runOf[source] = run;
+    }
+}
+
+// The key is stored XORed with the data. If two threads write the same slot at the same time, the slot may get the
+// key from one and the data from the other, and then the key doesn't match the data, like in the CPU hash table.
+struct alignas(16) GpuHashSlot
+{
+    uint64_t keyXorData;
+    uint64_t data; // Depth in the high 8 bits, node count in the low 56 bits. Zero for an empty slot.
+};
+
+__device__ __forceinline__ GpuHashSlot loadSlot(const GpuHashSlot* slot)
+{
+    ulonglong2 value = *reinterpret_cast<const ulonglong2*>(slot);
+    return { value.x, value.y };
+}
+
+__device__ __forceinline__ void storeSlot(GpuHashSlot* slot, uint64_t key, uint64_t data)
+{
+    *reinterpret_cast<ulonglong2*>(slot) = make_ulonglong2(key ^ data, data);
+}
+
+__global__ void probeKernel(const Position* positions, uint32_t numPositions, uint64_t depth, const GpuHashSlot* table, uint64_t bucketMask,
+    uint64_t* nodeCounts)
+{
+    uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < numPositions)
+    {
+        const Position& pos = positions[index];
+        uint64_t key = hashKey(pos);
+        const GpuHashSlot* bucket = table + (hashIndex(pos) & bucketMask) * HashBucketSize;
+        uint64_t count = UnknownCount;
+        for (int i = 0; i < HashBucketSize; ++i)
+        {
+            GpuHashSlot slot = loadSlot(bucket + i);
+            if ((slot.keyXorData ^ slot.data) == key && (slot.data >> 56) == depth)
+            {
+                count = slot.data & HashCountMask;
+                break;
+            }
+        }
+        nodeCounts[index] = count;
+    }
+}
+
+// Stores the node counts of the positions given by the indices, or of all positions if there are no indices.
+// Replaces the same position, an empty slot, or the slot with the smallest depth.
+__global__ void insertKernel(const Position* positions, const uint32_t* indices, const uint32_t* numIndices, uint32_t numPositions,
+    uint64_t depth, const uint64_t* nodeCounts, GpuHashSlot* table, uint64_t bucketMask)
+{
+    uint32_t thread = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t count = indices ? *numIndices : numPositions;
+    if (thread >= count) return;
+
+    uint32_t index = indices ? indices[thread] : thread;
+    if (nodeCounts[index] <= HashCountMask)
+    {
+        const Position& pos = positions[index];
+        uint64_t key = hashKey(pos);
+        GpuHashSlot* bucket = table + (hashIndex(pos) & bucketMask) * HashBucketSize;
+        int victim = 0;
+        uint64_t victimDepth = ~0ULL;
+        for (int i = 0; i < HashBucketSize; ++i)
+        {
+            GpuHashSlot slot = loadSlot(bucket + i);
+            uint64_t slotDepth = slot.data >> 56;
+            if (slot.data == 0 || ((slot.keyXorData ^ slot.data) == key && slotDepth == depth))
+            {
+                victim = i;
+                break;
+            }
+            if (slotDepth < victimDepth)
+            {
+                victimDepth = slotDepth;
+                victim = i;
+            }
+        }
+        storeSlot(bucket + victim, key, (depth << 56) | nodeCounts[index]);
+    }
+}
+
+__global__ void fillKernel(uint64_t* values, uint32_t count, uint64_t value)
+{
+    uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < count)
+    {
+        values[index] = value;
+    }
+}
+
+// Adds the node counts of the positions of a batch, through the mapping to the merged positions, to the result
+__global__ void sumKernel(const uint64_t* nodeCounts, const uint32_t* runOf, uint32_t numPositions, unsigned long long* result)
+{
+    uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    unsigned long long count = (index < numPositions) ? nodeCounts[runOf[index]] : 0;
+    for (int offset = 16; offset > 0; offset /= 2)
+    {
+        count += __shfl_down_sync(0xffffffff, count, offset);
+    }
+    if ((threadIdx.x & 31) == 0)
+    {
+        atomicAdd(result, count);
     }
 }
 
@@ -201,76 +413,163 @@ uint32_t numBlocks(uint32_t numThreads)
 
 struct Level
 {
-    Position* positions; // On the GPU
+    Position* positions; // Merged positions of the level
+    uint64_t* nodeCounts; // Node count of the subtree of each merged position
+    uint32_t* runOf; // The merged position of each position before merging
     uint32_t* counts; // Number of moves of each position, plus one zero at the end for the total
     uint32_t* offsets; // Exclusive prefix sum of counts
     Move* moves; // Moves of the positions of the current chunk
     uint32_t* parents; // Index of the position of each move
 };
 
+// Buffers for merging the duplicate positions of a level
+struct Merge
+{
+    Position* positions; // Swapped with the positions of the merged level
+    uint32_t* keys[2];
+    uint32_t* indices[2];
+    uint32_t* heads;
+    uint32_t* runs;
+    void* sortStorage;
+    size_t sortStorageBytes;
+};
+
 Level levels[NumLevels];
+Merge merge;
+GpuHashSlot* gpuHashTable;
+uint64_t bucketMask;
 Position* hostBatch; // Pinned, so that the copy to the GPU is fast
 uint32_t* deviceChunk; // End and number of moves of a chunk
 uint32_t* hostChunk;
+uint32_t* hostNumUnique;
 unsigned long long* deviceResult;
 void* scanStorage;
 size_t scanStorageBytes;
+void* selectStorage;
+size_t selectStorageBytes;
+uint32_t* deviceNumSelected;
 int gpuDepth = 0;
 int batchSize = 0;
 Color batchColor = White;
 
 template<Color C>
-void launchLeafKernel(int depth, const Position* positions, uint32_t numPositions)
+void launchLeafKernel(int depth, const Position* positions, const uint32_t* indices, const uint32_t* numIndices, uint32_t numPositions,
+    uint64_t* nodeCounts)
 {
     switch (depth)
     {
-    case 1: leafKernel<C, 1><<<numBlocks(numPositions), BlockSize>>>(positions, numPositions, deviceResult); break;
-    case 2: leafKernel<C, 2><<<numBlocks(numPositions), BlockSize>>>(positions, numPositions, deviceResult); break;
-    case 3: leafKernel<C, 3><<<numBlocks(numPositions), BlockSize>>>(positions, numPositions, deviceResult); break;
+    case 1: leafKernel<C, 1><<<numBlocks(numPositions), BlockSize>>>(positions, indices, numIndices, numPositions, nodeCounts); break;
+    case 2: leafKernel<C, 2><<<numBlocks(numPositions), BlockSize>>>(positions, indices, numIndices, numPositions, nodeCounts); break;
+    case 3: leafKernel<C, 3><<<numBlocks(numPositions), BlockSize>>>(positions, indices, numIndices, numPositions, nodeCounts); break;
     default: fprintf(stderr, "Unsupported leaf depth %d\n", depth); exit(EXIT_FAILURE);
     }
     CUDA_CHECK(cudaGetLastError());
 }
 
-// Searches the positions of a level to the given depth
+// Merges the duplicate positions of a level, maps the positions to the merged ones, and returns the number of merged positions
+uint32_t deduplicate(Level& level, uint32_t numPositions)
+{
+    if (numPositions == 1)
+    {
+        CUDA_CHECK(cudaMemsetAsync(level.runOf, 0, sizeof(uint32_t)));
+        return 1;
+    }
+
+    keyKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, numPositions, merge.keys[0], merge.indices[0]);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cub::DeviceRadixSort::SortPairs(merge.sortStorage, merge.sortStorageBytes, merge.keys[0], merge.keys[1],
+        merge.indices[0], merge.indices[1], numPositions));
+    headKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, merge.keys[1], merge.indices[1], numPositions, merge.heads);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cub::DeviceScan::InclusiveSum(scanStorage, scanStorageBytes, merge.heads, merge.runs, numPositions));
+    mergeKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, merge.indices[1], merge.heads, merge.runs, numPositions,
+        merge.positions, level.runOf);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaMemcpy(hostNumUnique, merge.runs + numPositions - 1, sizeof(uint32_t), cudaMemcpyDeviceToHost));
+
+    std::swap(level.positions, merge.positions);
+    return *hostNumUnique;
+}
+
+// Searches the positions of a level to the given depth. Afterwards, the node counts of the merged positions and the
+// mapping from the positions to the merged positions are in the level.
 template<Color C>
 void searchLevel(int levelIndex, uint32_t numPositions, int depth)
 {
     if (numPositions == 0) return;
 
     Level& level = levels[levelIndex];
+    numPositions = deduplicate(level, numPositions);
+
+    bool useHashTable = UseHashTable && depth >= MinHashDepth;
+    if (useHashTable)
+    {
+        probeKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, numPositions, depth, gpuHashTable, bucketMask, level.nodeCounts);
+    }
+    else
+    {
+        fillKernel<<<numBlocks(numPositions), BlockSize>>>(level.nodeCounts, numPositions, UnknownCount);
+    }
+    CUDA_CHECK(cudaGetLastError());
+
     if (depth <= LeafDepth)
     {
-        launchLeafKernel<C>(depth, level.positions, numPositions);
+        if (useHashTable)
+        {
+            // Search and store only the positions that weren't found, so that the warps don't have idle threads
+            CUDA_CHECK(cub::DeviceSelect::If(selectStorage, selectStorageBytes, cub::CountingInputIterator<uint32_t>(0), merge.keys[0],
+                deviceNumSelected, numPositions, IsUnknown{ level.nodeCounts }));
+            launchLeafKernel<C>(depth, level.positions, merge.keys[0], deviceNumSelected, numPositions, level.nodeCounts);
+            insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, merge.keys[0], deviceNumSelected, numPositions, depth,
+                level.nodeCounts, gpuHashTable, bucketMask);
+            CUDA_CHECK(cudaGetLastError());
+        }
+        else
+        {
+            launchLeafKernel<C>(depth, level.positions, nullptr, nullptr, numPositions, level.nodeCounts);
+        }
         return;
     }
-
-    countKernel<C><<<numBlocks(numPositions), BlockSize>>>(level.positions, numPositions, level.counts);
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaMemsetAsync(level.counts + numPositions, 0, sizeof(uint32_t)));
-    CUDA_CHECK(cub::DeviceScan::ExclusiveSum(scanStorage, scanStorageBytes, level.counts, level.offsets, numPositions + 1));
-
-    Level& next = levels[levelIndex + 1];
-    uint32_t begin = 0;
-    while (begin < numPositions)
+    else
     {
-        findChunkEndKernel<<<1, 1>>>(level.offsets, numPositions, begin, LevelCapacity, deviceChunk);
+        countKernel<C><<<numBlocks(numPositions), BlockSize>>>(level.positions, level.nodeCounts, numPositions, level.counts);
         CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaMemcpy(hostChunk, deviceChunk, 2 * sizeof(uint32_t), cudaMemcpyDeviceToHost));
-        uint32_t end = hostChunk[0];
-        uint32_t numMoves = hostChunk[1];
+        CUDA_CHECK(cudaMemsetAsync(level.counts + numPositions, 0, sizeof(uint32_t)));
+        CUDA_CHECK(cub::DeviceScan::ExclusiveSum(scanStorage, scanStorageBytes, level.counts, level.offsets, numPositions + 1));
 
-        if (numMoves > 0)
+        Level& next = levels[levelIndex + 1];
+        uint32_t begin = 0;
+        while (begin < numPositions)
         {
-            generateKernel<C><<<numBlocks(end - begin), BlockSize>>>(level.positions, begin, end, level.offsets, level.moves, level.parents);
+            findChunkEndKernel<<<1, 1>>>(level.offsets, numPositions, begin, LevelCapacity, deviceChunk);
             CUDA_CHECK(cudaGetLastError());
-            makeKernel<C><<<numBlocks(numMoves), BlockSize>>>(level.positions, level.moves, level.parents, numMoves, next.positions);
+            CUDA_CHECK(cudaMemcpy(hostChunk, deviceChunk, 2 * sizeof(uint32_t), cudaMemcpyDeviceToHost));
+            uint32_t end = hostChunk[0];
+            uint32_t numMoves = hostChunk[1];
+
+            if (numMoves > 0)
+            {
+                generateKernel<C><<<numBlocks(end - begin), BlockSize>>>(level.positions, level.nodeCounts, begin, end, level.offsets,
+                    level.moves, level.parents);
+                CUDA_CHECK(cudaGetLastError());
+                makeKernel<C><<<numBlocks(numMoves), BlockSize>>>(level.positions, level.moves, level.parents, numMoves, next.positions);
+                CUDA_CHECK(cudaGetLastError());
+
+                searchLevel<opponent(C)>(levelIndex + 1, numMoves, depth - 1);
+            }
+
+            aggregateKernel<<<numBlocks(end - begin), BlockSize>>>(begin, end, level.offsets, next.nodeCounts, next.runOf, level.nodeCounts);
             CUDA_CHECK(cudaGetLastError());
 
-            searchLevel<opponent(C)>(levelIndex + 1, numMoves, depth - 1);
+            begin = end;
         }
+    }
 
-        begin = end;
+    if (useHashTable)
+    {
+        insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, nullptr, nullptr, numPositions, depth, level.nodeCounts,
+            gpuHashTable, bucketMask);
+        CUDA_CHECK(cudaGetLastError());
     }
 }
 
@@ -278,7 +577,8 @@ void searchBatch()
 {
     if (batchSize == 0) return;
 
-    CUDA_CHECK(cudaMemcpy(levels[0].positions, hostBatch, batchSize * sizeof(Position), cudaMemcpyHostToDevice));
+    Level& level = levels[0];
+    CUDA_CHECK(cudaMemcpy(level.positions, hostBatch, batchSize * sizeof(Position), cudaMemcpyHostToDevice));
     if (batchColor == White)
     {
         searchLevel<White>(0, batchSize, gpuDepth);
@@ -287,6 +587,9 @@ void searchBatch()
     {
         searchLevel<Black>(0, batchSize, gpuDepth);
     }
+
+    sumKernel<<<numBlocks(batchSize), BlockSize>>>(level.nodeCounts, level.runOf, batchSize, deviceResult);
+    CUDA_CHECK(cudaGetLastError());
     batchSize = 0;
 }
 
@@ -352,15 +655,17 @@ bool initGpuPerft()
 
     CUDA_CHECK(cudaMemcpyToSymbol(d_moveTables, &moveTables, sizeof(MoveTables)));
 
+    // All levels have the same capacity, because merging swaps their positions with the merge buffer
     for (int i = 0; i < NumLevels; ++i)
     {
         Level& level = levels[i];
-        uint32_t capacity = (i == 0) ? BatchSize : LevelCapacity;
-        CUDA_CHECK(cudaMalloc(&level.positions, capacity * sizeof(Position)));
+        CUDA_CHECK(cudaMalloc(&level.positions, LevelCapacity * sizeof(Position)));
+        CUDA_CHECK(cudaMalloc(&level.nodeCounts, LevelCapacity * sizeof(uint64_t)));
+        CUDA_CHECK(cudaMalloc(&level.runOf, LevelCapacity * sizeof(uint32_t)));
         if (i < NumLevels - 1)
         {
-            CUDA_CHECK(cudaMalloc(&level.counts, (capacity + 1) * sizeof(uint32_t)));
-            CUDA_CHECK(cudaMalloc(&level.offsets, (capacity + 1) * sizeof(uint32_t)));
+            CUDA_CHECK(cudaMalloc(&level.counts, (LevelCapacity + 1) * sizeof(uint32_t)));
+            CUDA_CHECK(cudaMalloc(&level.offsets, (LevelCapacity + 1) * sizeof(uint32_t)));
             CUDA_CHECK(cudaMalloc(&level.moves, LevelCapacity * sizeof(Move)));
             CUDA_CHECK(cudaMalloc(&level.parents, LevelCapacity * sizeof(uint32_t)));
         }
@@ -371,16 +676,50 @@ bool initGpuPerft()
         }
     }
 
+    CUDA_CHECK(cudaMalloc(&merge.positions, LevelCapacity * sizeof(Position)));
+    for (int i = 0; i < 2; ++i)
+    {
+        CUDA_CHECK(cudaMalloc(&merge.keys[i], LevelCapacity * sizeof(uint32_t)));
+        CUDA_CHECK(cudaMalloc(&merge.indices[i], LevelCapacity * sizeof(uint32_t)));
+    }
+    CUDA_CHECK(cudaMalloc(&merge.heads, LevelCapacity * sizeof(uint32_t)));
+    CUDA_CHECK(cudaMalloc(&merge.runs, LevelCapacity * sizeof(uint32_t)));
+    CUDA_CHECK(cub::DeviceRadixSort::SortPairs(nullptr, merge.sortStorageBytes, static_cast<uint32_t*>(nullptr), static_cast<uint32_t*>(nullptr),
+        static_cast<uint32_t*>(nullptr), static_cast<uint32_t*>(nullptr), LevelCapacity));
+    CUDA_CHECK(cudaMalloc(&merge.sortStorage, merge.sortStorageBytes));
+
+    size_t inclusiveScanBytes = 0;
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(nullptr, scanStorageBytes, static_cast<uint32_t*>(nullptr), static_cast<uint32_t*>(nullptr), LevelCapacity + 1));
+    CUDA_CHECK(cub::DeviceScan::InclusiveSum(nullptr, inclusiveScanBytes, static_cast<uint32_t*>(nullptr), static_cast<uint32_t*>(nullptr), LevelCapacity));
+    scanStorageBytes = std::max(scanStorageBytes, inclusiveScanBytes);
     CUDA_CHECK(cudaMalloc(&scanStorage, scanStorageBytes));
+
+    CUDA_CHECK(cub::DeviceSelect::If(nullptr, selectStorageBytes, cub::CountingInputIterator<uint32_t>(0), static_cast<uint32_t*>(nullptr),
+        static_cast<uint32_t*>(nullptr), LevelCapacity, IsUnknown{ nullptr }));
+    CUDA_CHECK(cudaMalloc(&selectStorage, selectStorageBytes));
+    CUDA_CHECK(cudaMalloc(&deviceNumSelected, sizeof(uint32_t)));
+
+    if (UseHashTable)
+    {
+        size_t numBuckets = 1ULL << HashTableSizeExp;
+        bucketMask = numBuckets - 1;
+        CUDA_CHECK(cudaMalloc(&gpuHashTable, numBuckets * HashBucketSize * sizeof(GpuHashSlot)));
+        CUDA_CHECK(cudaMemset(gpuHashTable, 0, numBuckets * HashBucketSize * sizeof(GpuHashSlot)));
+    }
 
     CUDA_CHECK(cudaMallocHost(&hostBatch, BatchSize * sizeof(Position)));
     CUDA_CHECK(cudaMalloc(&deviceChunk, 2 * sizeof(uint32_t)));
     CUDA_CHECK(cudaMallocHost(&hostChunk, 2 * sizeof(uint32_t)));
+    CUDA_CHECK(cudaMallocHost(&hostNumUnique, sizeof(uint32_t)));
     CUDA_CHECK(cudaMalloc(&deviceResult, sizeof(unsigned long long)));
 
     // The first launches allocate the local memory of the kernels, which isn't included in the search time
     runGpuPerft(Position(), MaxGpuDepth);
+    if (UseHashTable)
+    {
+        CUDA_CHECK(cudaMemset(gpuHashTable, 0, (bucketMask + 1) * HashBucketSize * sizeof(GpuHashSlot)));
+    }
+    CUDA_CHECK(cudaDeviceSynchronize()); // cudaMemset is asynchronous, so wait for it here instead of in the first search
 
     return true;
 }
@@ -417,15 +756,33 @@ void releaseGpuPerft()
     for (Level& level : levels)
     {
         CUDA_CHECK(cudaFree(level.positions));
+        CUDA_CHECK(cudaFree(level.nodeCounts));
+        CUDA_CHECK(cudaFree(level.runOf));
         CUDA_CHECK(cudaFree(level.counts));
         CUDA_CHECK(cudaFree(level.offsets));
         CUDA_CHECK(cudaFree(level.moves));
         CUDA_CHECK(cudaFree(level.parents));
     }
+    CUDA_CHECK(cudaFree(merge.positions));
+    for (int i = 0; i < 2; ++i)
+    {
+        CUDA_CHECK(cudaFree(merge.keys[i]));
+        CUDA_CHECK(cudaFree(merge.indices[i]));
+    }
+    CUDA_CHECK(cudaFree(merge.heads));
+    CUDA_CHECK(cudaFree(merge.runs));
+    CUDA_CHECK(cudaFree(merge.sortStorage));
     CUDA_CHECK(cudaFree(scanStorage));
+    CUDA_CHECK(cudaFree(selectStorage));
+    CUDA_CHECK(cudaFree(deviceNumSelected));
+    if (UseHashTable)
+    {
+        CUDA_CHECK(cudaFree(gpuHashTable));
+    }
     CUDA_CHECK(cudaFreeHost(hostBatch));
     CUDA_CHECK(cudaFree(deviceChunk));
     CUDA_CHECK(cudaFreeHost(hostChunk));
+    CUDA_CHECK(cudaFreeHost(hostNumUnique));
     CUDA_CHECK(cudaFree(deviceResult));
 }
 
