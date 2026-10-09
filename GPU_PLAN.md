@@ -252,6 +252,20 @@ The depth 2 leaf search counts the children in check after the others (`DeferChe
 - Upper bounds, measured with wrong counts: without the en passant counting of the children, the search would be about 1% faster, and without their pins 5-7%. Deferring the pinned children would recalculate a large share of the children, so it was not tried.
 - Sorting the leaf positions in check together (a check bit in the sort key) made no difference, since they're rare.
 
+Several threads per position (rejected): a group of G threads searched one depth 2 leaf position. All threads of the group generated the same moves, each counted every G-th child, and a shuffle reduction summed the group. The idea was that the children of one position are similar, so a warp with fewer positions would diverge less.
+
+| G | Initial position depth 8 / 9, Kiwipete depth 7 / 8, position 6 depth 7 |
+|---|---|
+| 1 (current) | 0.152 / 1.78 s, 0.398 / 12.27 s, 0.278 s |
+| 2 | 0.162 / 1.92 s, 0.414 / 12.87 s, 0.297 s |
+| 4 | 0.203 / 2.34 s, 0.470 / 14.71 s, 0.342 s |
+| 8 | 0.319 / 3.61 s, 0.663 / 19.99 s, 0.515 s |
+| 16 | 0.539 / 6.10 s, 1.141 / 35.10 s, 0.879 s |
+| 32 | 0.983 / 10.99 s, 2.050 / 63.43 s, 1.575 s |
+
+- The time grows almost linearly with G, about T(1) x (0.84 + 0.16 G). Generating the moves of a position is about 16% of its work, and with G threads per position, G times as many warps each generate the moves once. Generating them once into shared memory wouldn't help, since the other threads of the group would just wait. The similarity of the children saved much less than that.
+- It would need a data-parallel move generator, where the threads of a group generate different parts of the moves with the same code (e.g. one piece per thread, with branch-free attack calculations), instead of the shared move generator.
+
 The hybrid search (the CPU walks the top of the tree with its hash table) is not implemented. The GPU already handles the transpositions below the CPU levels, by merging within a batch and with its hash table between batches, and the CPU levels have only a few hundred thousand positions even at depth 10. Searching part of the tree on the CPU at about 8 Gnps would add less than 2% to the GPU's effective 300-900 Gnps.
 
 ## Testing and measurement
