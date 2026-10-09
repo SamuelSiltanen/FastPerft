@@ -20,7 +20,7 @@ Where supported options include:
   
   `-s` Print stats of the leaf nodes: captures, en passants, castles, promotions, checks, discovered checks, double checks, and checkmates, as in https://www.chessprogramming.org/Perft_Results. This uses a slower search without bulk counting and the hash table (see Stats).
 
-  `-g` Search the last 6 plies on the GPU (see GPU). The CPU expands the tree down to them. The GPU has its own hash table (2 GB), and `-h` doesn't affect it.
+  `-g` Search the last 5 plies on the GPU (see GPU). The CPU expands the tree down to them. The GPU has its own hash table (2 GB), and `-h` doesn't affect it.
 
 For example, `fastperft -d 6 -f "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -"` counts the nodes of the Kiwipete position at depth 6.
 
@@ -68,19 +68,19 @@ The speed depends on the position: positions with many moves per node are faster
 
 ## GPU
 
-With `-g`, the CPU expands the tree down to 6 plies before the leaves, and the GPU searches the remaining subtrees. The first 4 of them are searched breadth first: for each level, the GPU counts the moves of each position, calculates their offsets with a prefix sum, generates the moves, and makes them in parallel. Each GPU thread searches the last 2 plies of one position depth first. Before a level is searched, its duplicate positions are merged, and the positions found in the GPU hash table are skipped. The move generation code is shared with the CPU (`MoveGenerationImpl.hpp`, `MakeImpl.hpp`), and the GPU uses kindergarten bitboards for the sliding pieces, with the lookup tables in shared memory. See `GPU_PLAN.md` for the plan and the status of the port.
+With `-g`, the CPU expands the tree down to 5 plies before the leaves, and the GPU searches the remaining subtrees. The first 3 of them are searched breadth first: for each level, the GPU counts the moves of each position, calculates their offsets with a prefix sum, generates the moves, and makes them in parallel. Each GPU thread searches the last 2 plies of one position depth first, and the positions are sorted by their number of moves, so that the threads of a warp have similar work. Before a level is searched, its duplicate positions are merged (except at the last level), and the positions found in the GPU hash table are skipped. The move generation code is shared with the CPU (`MoveGenerationImpl.hpp`, `MakeImpl.hpp`), and the GPU uses kindergarten bitboards for the sliding pieces, with the lookup tables in shared memory. See `GPU_PLAN.md` for the plan and the status of the port.
 
 On an NVIDIA GeForce RTX 2070 Super:
 
 | Position | Depth | Nodes | Time |
 |---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 0.021 s (154.6 Gnps) |
-| Initial position | 8 | 84 998 978 956 | 0.254 s (334.1 Gnps) |
-| Initial position | 9 | 2 439 530 234 167 | 3.33 s (732.1 Gnps) |
-| Initial position | 10 | 69 352 859 712 417 | 73.1 s (948.4 Gnps) |
-| Kiwipete | 6 | 8 031 647 685 | 0.029 s (275.4 Gnps) |
-| Kiwipete | 7 | 374 190 009 323 | 0.629 s (595.3 Gnps) |
-| Kiwipete | 8 | 15 493 944 087 984 | 19.2 s (806.2 Gnps) |
+| Initial position | 7 | 3 195 901 860 | 0.020 s (159.4 Gnps) |
+| Initial position | 8 | 84 998 978 956 | 0.160 s (529.6 Gnps) |
+| Initial position | 9 | 2 439 530 234 167 | 1.87 s (1306.7 Gnps) |
+| Initial position | 10 | 69 352 859 712 417 | 30.2 s (2296.2 Gnps) |
+| Kiwipete | 6 | 8 031 647 685 | 0.034 s (235.7 Gnps) |
+| Kiwipete | 7 | 374 190 009 323 | 0.416 s (899.5 Gnps) |
+| Kiwipete | 8 | 15 493 944 087 984 | 13.0 s (1195.1 Gnps) |
 
 The times don't include the initialization of the GPU. As with the CPU hash table, the speed includes the subtrees found in the hash table and the merged duplicates.
 

@@ -41,7 +41,7 @@
 namespace
 {
 
-constexpr int MaxGpuDepth = 6; // Plies searched on the GPU, the CPU expands the tree to depth - MaxGpuDepth
+constexpr int MaxGpuDepth = 5; // Plies searched on the GPU, the CPU expands the tree to depth - MaxGpuDepth
 constexpr int LeafDepth = 2; // Plies that each GPU thread searches depth first at the end, 1 to 3
 constexpr int NumLevels = MaxGpuDepth - LeafDepth + 1; // Levels of positions stored on the GPU
 constexpr int BatchSize = 64 * 1024; // Positions per batch from the CPU
@@ -56,6 +56,8 @@ constexpr int HashBucketSize = 4;
 constexpr int MinHashDepth = 2; // Depth-1 counts are faster to calculate than to look up
 constexpr uint64_t HashCountMask = (1ULL << 56) - 1; // The count is in the low 56 bits of the data, and the depth in the high 8 bits
 constexpr uint64_t UnknownCount = ~0ULL;
+constexpr int MinMergeDepth = LeafDepth + 1; // Merging the leaf level costs more than it saves, and the hash table finds most of its duplicates
+constexpr bool SortLeavesByMoves = true; // Sort the leaf positions by their number of moves, so that the threads of a warp have similar work
 
 static_assert(LeafDepth >= 1 && LeafDepth <= 3 && LeafDepth <= MaxGpuDepth, "Unsupported leaf depth");
 static_assert(BatchSize <= LevelCapacity, "The batch must fit in a level");
@@ -365,6 +367,29 @@ __global__ void insertKernel(const Position* positions, const uint32_t* indices,
     }
 }
 
+// Counts the moves of the positions given by the indices
+template<Color C>
+__global__ void __launch_bounds__(BlockSize) countSelectedKernel(const Position* positions, const uint32_t* indices, uint32_t numIndices,
+    uint32_t* counts)
+{
+    loadMoveTables();
+
+    uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < numIndices)
+    {
+        counts[index] = static_cast<uint32_t>(countMoves<C>(positions[indices[index]]));
+    }
+}
+
+__global__ void identityKernel(uint32_t* values, uint32_t count)
+{
+    uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < count)
+    {
+        values[index] = index;
+    }
+}
+
 __global__ void fillKernel(uint64_t* values, uint32_t count, uint64_t value)
 {
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -499,7 +524,15 @@ void searchLevel(int levelIndex, uint32_t numPositions, int depth)
     if (numPositions == 0) return;
 
     Level& level = levels[levelIndex];
-    numPositions = deduplicate(level, numPositions);
+    if (depth >= MinMergeDepth)
+    {
+        numPositions = deduplicate(level, numPositions);
+    }
+    else
+    {
+        identityKernel<<<numBlocks(numPositions), BlockSize>>>(level.runOf, numPositions);
+        CUDA_CHECK(cudaGetLastError());
+    }
 
     bool useHashTable = UseHashTable && depth >= MinHashDepth;
     if (useHashTable)
@@ -519,8 +552,22 @@ void searchLevel(int levelIndex, uint32_t numPositions, int depth)
             // Search and store only the positions that weren't found, so that the warps don't have idle threads
             CUDA_CHECK(cub::DeviceSelect::If(selectStorage, selectStorageBytes, cub::CountingInputIterator<uint32_t>(0), merge.keys[0],
                 deviceNumSelected, numPositions, IsUnknown{ level.nodeCounts }));
-            launchLeafKernel<C>(depth, level.positions, merge.keys[0], deviceNumSelected, numPositions, level.nodeCounts);
-            insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, merge.keys[0], deviceNumSelected, numPositions, depth,
+            const uint32_t* indices = merge.keys[0];
+            if (SortLeavesByMoves && depth >= 2)
+            {
+                CUDA_CHECK(cudaMemcpy(hostNumUnique, deviceNumSelected, sizeof(uint32_t), cudaMemcpyDeviceToHost));
+                uint32_t numSelected = *hostNumUnique;
+                if (numSelected > 1)
+                {
+                    countSelectedKernel<C><<<numBlocks(numSelected), BlockSize>>>(level.positions, merge.keys[0], numSelected, merge.heads);
+                    CUDA_CHECK(cudaGetLastError());
+                    CUDA_CHECK(cub::DeviceRadixSort::SortPairs(merge.sortStorage, merge.sortStorageBytes, merge.heads, merge.runs,
+                        merge.keys[0], merge.indices[0], numSelected, 0, 8)); // At most 218 moves, so 8 bits are enough
+                    indices = merge.indices[0];
+                }
+            }
+            launchLeafKernel<C>(depth, level.positions, indices, deviceNumSelected, numPositions, level.nodeCounts);
+            insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, indices, deviceNumSelected, numPositions, depth,
                 level.nodeCounts, gpuHashTable, bucketMask);
             CUDA_CHECK(cudaGetLastError());
         }

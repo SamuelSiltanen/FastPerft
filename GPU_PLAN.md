@@ -171,6 +171,26 @@ Status: merging and the hash table are done, the hybrid search is not (see below
 | Kiwipete | 8 | | 19.2 s (CPU with hash table: 270 s) |
 | Position 6 | 7 | 1.47 s | 0.472 s |
 
+### Leaf search optimization (after phase 4)
+
+The search is 1.4-2.4x faster than at the end of phase 4. Measurements (initial position depth 8 / depth 9 / Kiwipete depth 7 / depth 8 / position 6 depth 7, in seconds):
+
+| Variant | Time |
+|---|---|
+| Phase 4 | 0.254 / 3.33 / 0.629 / 19.2 / 0.472 |
+| Leaf positions sorted by their number of moves (`SortLeavesByMoves`) | 0.227 / 2.98 / 0.575 / 17.9 / 0.419 |
+| Separate kernels for generating the leaf moves and for counting the moves of the children (rejected) | 0.259 / 3.38 / 0.660 / 21.5 / 0.519 |
+| Leaf depth 1 (rejected) | 1.30 / 16.7 / 3.88 / 140 / 2.90 |
+| No merging at the leaf level (`MinMergeDepth`) | 0.157 / 1.96 / 0.415 / 13.3 / 0.298 |
+| + GPU depth 5 instead of 6 | 0.159 / 1.87 / 0.415 / 13.0 / 0.298 |
+
+- Sorting: the positions that weren't found are counted (`countSelectedKernel`) and sorted by their number of moves with one 8-bit radix sort pass. A warp then gets positions with about as many moves, so its threads loop about as many times. Without merging at the leaf level, sorting still helps by 1-8%.
+- Nsight Compute after sorting (Kiwipete depth 7): 25.1 of 32 threads active per instruction, 80 registers, 71% of the warps active, 58% of the issue slots used. Stalls: no instruction 27%, short scoreboard 18%, wait 16%, math pipe throttle 8%, long scoreboard 3%. The depth 2 leaf kernel is 9,120 instructions (146 kB), while counting the moves of one position (the depth 1 leaf kernel) is 1,680 instructions.
+- Split leaf search: the moves of the leaf positions were generated into global memory (6 bytes per move), and a second kernel made each move and counted the moves of the child, one thread per child, with a segmented warp sum per parent. The child kernel alone took 259 ms against 291 ms for the whole fused leaf kernel (Kiwipete depth 7), but generating the moves took 129 ms more, mostly from the scattered writes and from processing the positions twice.
+- No merging at the leaf level: merging the largest level took 15% of the GPU time, and it reorders the positions by their hash, which separates the siblings that the leaf kernel searches efficiently together. The hash table still finds most of the duplicates between the chunks. Merging only from depth 4 up is slower.
+- The register limit (3 blocks per SM), the level capacity (2M-8M), and GPU depth 7 make no difference or are slower.
+- Initial position depth 10: 73.1 s -> 30.2 s.
+
 The hybrid search (the CPU walks the top of the tree with its hash table) is not implemented. The GPU already handles the transpositions below the CPU levels, by merging within a batch and with its hash table between batches, and the CPU levels have only a few hundred thousand positions even at depth 10. Searching part of the tree on the CPU at about 8 Gnps would add less than 2% to the GPU's effective 300-900 Gnps.
 
 ## Testing and measurement
