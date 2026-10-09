@@ -11,6 +11,11 @@
 #define KINDERGARTEN_BITBOARDS 1
 #define PEXT_INTRINSIC 1
 
+// Sliding piece attacks on the GPU with hyperbola quintessence instead of kindergarten bitboards
+#define GPU_HYPERBOLA_QUINTESSENCE 0
+// Each GPU block copies the lookup tables to shared memory
+#define GPU_SHARED_TABLES 1
+
 struct alignas(64) Rays
 {
     uint64_t SE;
@@ -46,11 +51,31 @@ extern MoveTables moveTables;
 #ifdef __CUDACC__
 // Without relocatable device code, each CUDA translation unit has its own copy, which it must upload from moveTables
 static __device__ MoveTables d_moveTables;
+#if GPU_SHARED_TABLES
+static __shared__ MoveTables s_moveTables;
+#endif
+
+// Copies the lookup tables to shared memory, if they are used from there. All threads of the block must call this
+// at the start of a kernel that uses the tables.
+__device__ __forceinline__ void loadMoveTables()
+{
+#if GPU_SHARED_TABLES
+    const uint4* src = reinterpret_cast<const uint4*>(&d_moveTables);
+    uint4* dst = reinterpret_cast<uint4*>(&s_moveTables);
+    for (unsigned int i = threadIdx.x; i < sizeof(MoveTables) / sizeof(uint4); i += blockDim.x)
+    {
+        dst[i] = src[i];
+    }
+    __syncthreads();
+#endif
+}
 #endif
 
 FP_INLINE const MoveTables& tables()
 {
-#ifdef __CUDA_ARCH__
+#if defined(__CUDA_ARCH__) && GPU_SHARED_TABLES
+    return s_moveTables;
+#elif defined(__CUDA_ARCH__)
     return d_moveTables;
 #else
     return moveTables;

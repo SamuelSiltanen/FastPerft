@@ -43,7 +43,7 @@ The features are selected at compile time in `Config.hpp`:
   `GPU_PERFT` Enable the GPU search with the `-g` option. Enabled by default.
 
 
-The sliding piece attack lookup method is selected at the top of `MoveTables.hpp` (`PEXT_INTRINSIC`, `KINDERGARTEN_BITBOARDS`, `MAGIC_BITBOARDS`).
+The sliding piece attack lookup method is selected at the top of `MoveTables.hpp` (`PEXT_INTRINSIC`, `KINDERGARTEN_BITBOARDS`, `MAGIC_BITBOARDS`). The GPU options are also there: `GPU_SHARED_TABLES` (enabled) copies the lookup tables to shared memory, and `GPU_HYPERBOLA_QUINTESSENCE` (disabled, slower on Turing) replaces the kindergarten bitboards.
 
 ## Performance
 
@@ -68,17 +68,17 @@ The speed depends on the position: positions with many moves per node are faster
 
 ## GPU
 
-With `-g`, the CPU expands the tree down to 5 plies before the leaves, and the GPU searches the remaining subtrees. The first 3 of them are searched breadth first: for each level, the GPU counts the moves of each position, calculates their offsets with a prefix sum, generates the moves, and makes them in parallel. Each GPU thread searches the last 2 plies of one position depth first. The move generation code is shared with the CPU (`MoveGenerationImpl.hpp`, `MakeImpl.hpp`), and the GPU uses kindergarten bitboards for the sliding pieces. See `GPU_PLAN.md` for the plan and the status of the port.
+With `-g`, the CPU expands the tree down to 5 plies before the leaves, and the GPU searches the remaining subtrees. The first 3 of them are searched breadth first: for each level, the GPU counts the moves of each position, calculates their offsets with a prefix sum, generates the moves, and makes them in parallel. Each GPU thread searches the last 2 plies of one position depth first. The move generation code is shared with the CPU (`MoveGenerationImpl.hpp`, `MakeImpl.hpp`), and the GPU uses kindergarten bitboards for the sliding pieces, with the lookup tables in shared memory. See `GPU_PLAN.md` for the plan and the status of the port.
 
 On an NVIDIA GeForce RTX 2070 Super:
 
 | Position | Depth | Nodes | Time |
 |---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 0.038 s (83.6 Gnps) |
-| Initial position | 8 | 84 998 978 956 | 0.885 s (96.0 Gnps) |
-| Initial position | 9 | 2 439 530 234 167 | 22.3 s (109.4 Gnps) |
-| Kiwipete | 6 | 8 031 647 685 | 0.049 s (165.6 Gnps) |
-| Kiwipete | 7 | 374 190 009 323 | 2.07 s (180.5 Gnps) |
+| Initial position | 7 | 3 195 901 860 | 0.035 s (92.1 Gnps) |
+| Initial position | 8 | 84 998 978 956 | 0.758 s (112.1 Gnps) |
+| Initial position | 9 | 2 439 530 234 167 | 19.4 s (125.5 Gnps) |
+| Kiwipete | 6 | 8 031 647 685 | 0.041 s (194.9 Gnps) |
+| Kiwipete | 7 | 374 190 009 323 | 1.82 s (206.1 Gnps) |
 
 The times don't include the initialization of the GPU.
 

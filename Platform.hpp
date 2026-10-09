@@ -23,7 +23,7 @@
 FP_INLINE uint64_t tzcnt64(uint64_t x)
 {
 #ifdef __CUDA_ARCH__
-    return static_cast<uint64_t>(__clzll(static_cast<long long>(__brevll(x))));
+    return static_cast<uint64_t>(__popcll((x & (0 - x)) - 1)); // Fewer slow instructions than __clzll(__brevll(x))
 #else
     return _tzcnt_u64(x);
 #endif

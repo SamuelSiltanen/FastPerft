@@ -9,7 +9,6 @@
 #include "MoveGeneration.hpp"
 #include "Make.hpp"
 
-#include <cub/block/block_reduce.cuh>
 #include <cub/device/device_scan.cuh>
 #include <cstdio>
 #include <cstdlib>
@@ -103,21 +102,25 @@ __device__ uint64_t perftThread(const Position& pos)
     }
 }
 
-// Sums the counts of a block and adds the sum to the result
+// Sums the counts of a warp and adds the sum to the result. A warp reduction instead of a block reduction,
+// so that the warps that finish early don't wait for the others in the block.
 __device__ __forceinline__ void addToResult(unsigned long long count, unsigned long long* result)
 {
-    using BlockReduce = cub::BlockReduce<unsigned long long, BlockSize>;
-    __shared__ typename BlockReduce::TempStorage reduceStorage;
-    unsigned long long blockCount = BlockReduce(reduceStorage).Sum(count);
-    if (threadIdx.x == 0)
+    for (int offset = 16; offset > 0; offset /= 2)
     {
-        atomicAdd(result, blockCount);
+        count += __shfl_down_sync(0xffffffff, count, offset);
+    }
+    if ((threadIdx.x & 31) == 0)
+    {
+        atomicAdd(result, count);
     }
 }
 
 template<Color C, int Depth>
 __global__ void __launch_bounds__(BlockSize, LeafMinBlocks) leafKernel(const Position* positions, uint32_t numPositions, unsigned long long* result)
 {
+    loadMoveTables();
+
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
 
     unsigned long long count = 0;
@@ -132,6 +135,8 @@ __global__ void __launch_bounds__(BlockSize, LeafMinBlocks) leafKernel(const Pos
 template<Color C>
 __global__ void __launch_bounds__(BlockSize) countKernel(const Position* positions, uint32_t numPositions, uint32_t* counts)
 {
+    loadMoveTables();
+
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numPositions)
     {
@@ -145,6 +150,8 @@ template<Color C>
 __global__ void __launch_bounds__(BlockSize) generateKernel(const Position* positions, uint32_t begin, uint32_t end, const uint32_t* offsets,
     Move* moves, uint32_t* parents)
 {
+    loadMoveTables();
+
     uint32_t index = begin + blockIdx.x * blockDim.x + threadIdx.x;
     if (index < end)
     {
@@ -162,6 +169,8 @@ template<Color C>
 __global__ void __launch_bounds__(BlockSize) makeKernel(const Position* positions, const Move* moves, const uint32_t* parents,
     uint32_t numMoves, Position* children)
 {
+    loadMoveTables();
+
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numMoves)
     {

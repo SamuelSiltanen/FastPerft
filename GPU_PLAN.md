@@ -109,6 +109,40 @@ Findings for phase 3:
 
 Measure with the same harness: kindergarten in shared memory, plain magic in L2 (the compressed rook table is about 800 KB, the L2 is 4 MB), Kogge-Stone (no tables), and hyperbola quintessence with `__brevll`. The winner depends on register pressure and occupancy more than on instruction counts. Profile with Nsight Compute.
 
+Status: done. The leaf kernel is 13-15% faster than in phase 2.
+
+Measurements (initial position depth 8 / Kiwipete depth 7 / position 6 depth 7 / position 3 depth 9, in seconds; the runs vary by about 5%):
+
+| Variant | Time |
+|---|---|
+| Phase 2: kindergarten, tables in global memory | 0.837 / 2.096 / 1.687 / 0.625 |
+| Kindergarten, tables in shared memory (`GPU_SHARED_TABLES`) | 0.753 / 1.897 / 1.520 / 0.601 |
+| Hyperbola quintessence, tables in global memory (`GPU_HYPERBOLA_QUINTESSENCE`) | 0.954 / 2.376 / 1.941 / 0.814 |
+| Hyperbola quintessence, tables in shared memory | 0.916 / 2.289 / 1.864 / 0.856 |
+| + warp reduction instead of block reduction | 0.752 / 1.887 / 1.507 / 0.600 |
+| + `tzcnt64` as `__popcll((x & -x) - 1)` instead of `__clzll(__brevll(x))` | 0.714-0.758 / 1.818 / 1.465 / 0.539 |
+| Not inlining the evasions and en passant on the GPU (rejected) | 1.432 / 3.047 / 2.747 / 1.473 |
+
+- Each block copies the lookup tables (16 kB) to shared memory at the start of each kernel (`loadMoveTables`). With 3 blocks of 256 threads per SM (`LeafMinBlocks`), they take 48 kB of the 64 kB of shared memory. 2 or 4 blocks per SM, or blocks of 128 threads, are slower.
+- Hyperbola quintessence is slower, because 64-bit subtractions and bit reversals take several instructions on Turing. The code stays as an option (`lineAttacks` in `MoveGenerationImpl.hpp`), since newer GPUs may differ.
+- Magic bitboards and Kogge-Stone were not implemented. Magic needs a 64-bit multiplication and an L2 lookup per slider (the tables don't fit in shared memory), while kindergarten with shared memory needs one shared memory lookup per line. Kogge-Stone needs even more 64-bit shifts than hyperbola quintessence.
+- The bit scan of `tzcnt64` on the GPU used two slow 64-bit instructions (`__brevll` and `__clzll`). The popcount version has exactly the same results, including 64 for zero.
+- Not inlining the rarely used functions moves `Position` and `Pins` to local memory, which costs much more than the smaller code saves.
+
+Nsight Compute of the leaf kernel (Kiwipete depth 6, before the `tzcnt64` change): 80 registers, 73% of the warps active, 62% of the issue slots used, 26.3 of 32 threads active per instruction (about 18% lost to divergence), L1 hit rate 47%, memory throughput 34% of peak. The warp stall reasons: wait 18%, no instruction 17% (instruction cache misses from the large inlined code), short scoreboard 15% (shared memory and MIO instructions), not selected 12%, selected 10%, math pipe throttle 9%, barrier 8%, long scoreboard 4%. So the kernel is limited by the instructions, not by the memory.
+
+Nsight Compute 2023.3 fails with "bad conversion" with the Finnish locale. It works with `LC_ALL=C` and `LANG=en_US` in the environment and `--metrics` with a few metrics at a time. The sections and metrics with large values still fail.
+
+| Position | Depth | Phase 2 | Phase 3 |
+|---|---|---|---|
+| Initial position | 7 | 0.038 s (83.6 Gnps) | 0.035 s (92.1 Gnps) |
+| Initial position | 8 | 0.885 s (96.0 Gnps) | 0.758 s (112.1 Gnps) |
+| Initial position | 9 | 22.3 s (109.4 Gnps) | 19.4 s (125.5 Gnps) |
+| Kiwipete | 6 | 0.049 s (165.6 Gnps) | 0.041 s (194.9 Gnps) |
+| Kiwipete | 7 | 2.07 s (180.5 Gnps) | 1.82 s (206.1 Gnps) |
+
+Ideas for later: less divergence in the leaf kernel (e.g., distribute the children of the positions of a block evenly over its threads through shared memory), and less code in the hot loop.
+
 ## Phase 4: Hybrid CPU+GPU and transposition tables
 
 - The CPU walks the top of the tree with its hash table. The GPU consumes batches of `WorkQueue` items.

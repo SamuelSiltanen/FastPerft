@@ -1166,9 +1166,23 @@ FP_INLINE uint64_t countCastling(const Position& pos, uint64_t occ, uint64_t pAr
 
 
 
+#if defined(__CUDA_ARCH__) && GPU_HYPERBOLA_QUINTESSENCE
+// Attacks along a line through the square (hyperbola quintessence). The line mask must not contain the square.
+// The bit reversal works for all line directions, including the ranks.
+__device__ __forceinline__ uint64_t lineAttacks(unsigned long src, uint64_t occ, uint64_t line)
+{
+    uint64_t o = occ & line;
+    uint64_t forward = o - (2ULL << src);
+    uint64_t reverse = __brevll(__brevll(o) - (2ULL << (63 - src)));
+    return (forward ^ reverse) & line;
+}
+#endif
+
 FP_INLINE uint64_t swneMoves(unsigned long src, uint64_t occ)
 {
-#if KINDERGARTEN_BITBOARDS
+#if defined(__CUDA_ARCH__) && GPU_HYPERBOLA_QUINTESSENCE
+    return lineAttacks(src, occ, tables().rays[src].SW | tables().rays[src].NE);
+#elif KINDERGARTEN_BITBOARDS
     const uint64_t bFile = 0x0202020202020202ULL;
     uint64_t index = (tables().swneExMask[src] & occ) * bFile >> 58;
     return tables().swneExMask[src] & tables().KinderGartenAttacks[src & 7][index];
@@ -1190,7 +1204,9 @@ FP_INLINE uint64_t swneMoves(unsigned long src, uint64_t occ)
 
 FP_INLINE uint64_t senwMoves(unsigned long src, uint64_t occ)
 {
-#if KINDERGARTEN_BITBOARDS
+#if defined(__CUDA_ARCH__) && GPU_HYPERBOLA_QUINTESSENCE
+    return lineAttacks(src, occ, tables().rays[src].SE | tables().rays[src].NW);
+#elif KINDERGARTEN_BITBOARDS
     const uint64_t bFile = 0x0202020202020202ULL;
     uint64_t index = (tables().senwExMask[src] & occ) * bFile >> 58;
     return tables().senwExMask[src] & tables().KinderGartenAttacks[src & 7][index];
@@ -1230,7 +1246,9 @@ FP_INLINE uint64_t bmoves(unsigned long src, uint64_t occ)
 
 FP_INLINE uint64_t weMoves(unsigned long src, uint64_t occ)
 {
-#if KINDERGARTEN_BITBOARDS
+#if defined(__CUDA_ARCH__) && GPU_HYPERBOLA_QUINTESSENCE
+    return lineAttacks(src, occ, tables().rays[src].W | tables().rays[src].E);
+#elif KINDERGARTEN_BITBOARDS
     const uint64_t bFile = 0x0202020202020202ULL;
     uint64_t index = (tables().weExMask[src] & occ) * bFile >> 58;
     return tables().weExMask[src] & tables().KinderGartenAttacks[src & 7][index];
@@ -1252,7 +1270,9 @@ FP_INLINE uint64_t weMoves(unsigned long src, uint64_t occ)
 
 FP_INLINE uint64_t snMoves(unsigned long src, uint64_t occ)
 {
-#if KINDERGARTEN_BITBOARDS
+#if defined(__CUDA_ARCH__) && GPU_HYPERBOLA_QUINTESSENCE
+    return lineAttacks(src, occ, tables().rays[src].S | tables().rays[src].N);
+#elif KINDERGARTEN_BITBOARDS
     const uint64_t AFile = 0x0101010101010101ULL;
     const uint64_t c7h2 = 0x0080402010080400ULL;
     uint64_t index = AFile & (occ >> (src & 7));
