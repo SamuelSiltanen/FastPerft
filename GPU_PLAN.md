@@ -212,6 +212,32 @@ Measurements (initial position depth 8 / depth 9 / Kiwipete depth 8 / initial po
 - 2 entries per bucket (one 64-byte cache line) is faster than 4 (two cache lines).
 - The default is 128-bit keys in a 4 GB table, which is about as fast as the earlier 64-bit keys in a 2 GB table. The GPU uses about 6 GB at most. For the fastest search, use 64-bit keys in a 4 GB table.
 
+### Smaller positions on the GPU
+
+The GPU buffers store `GpuPosition` (48 bytes) instead of `Position` (64 bytes): no hash key, and the state (12 bits) in the first and last ranks of the pawn bitboard. The kernels unpack them into `Position` for the move generator.
+
+| Position size | Initial position depth 8 / 9 / 10, Kiwipete depth 8, position 6 depth 7 | GPU time, Kiwipete depth 8 |
+|---|---|---|
+| 64 bytes | 0.162 / 1.97 / 30.7 s, 14.03 s, 0.304 s | 13.77 s |
+| 56 bytes (no hash key) | 0.164 / 2.02 / 31.0 s, 14.05 s, 0.311 s | 14.01 s |
+| 48 bytes (state in the pawn bitboard) | 0.159 / 1.94 / 30.1 s, 13.90 s, 0.299 s | 13.80 s |
+
+- The merging was meant to get faster, but it takes under 1% of the GPU time since the leaf level isn't merged anymore. The position size matters only in the kernels that read or write positions, and they take about 25% of the GPU time, mostly in the random hash table accesses.
+- 56-byte positions are slower, because they aren't aligned to 16 bytes, so they're read and written with 8-byte accesses instead of 16-byte vector accesses. The make kernel was 47% slower.
+- 48-byte positions are aligned to 16 bytes. The make kernel is 24% faster and the probe kernel 4% faster, but the total is 1-2% faster at most. The levels and the merge buffer take 25% less memory for the positions (about 400 MB less).
+
+32-byte positions (the current format): three bitboards give each square a 3-bit piece code, `a` = pawns, bishops, and queens, `b` = knights, rooks, and queens, `c` = pawns, knights, and kings, plus the white bitboard. The unused code 111 marks a rook that can still castle, so the castling rights are the corners with that code. The en passant square is always empty, and it's the only empty square in the white bitboard. The side to move isn't stored, because all positions in a level have the same side to move, so it's mixed into the hash table keys instead. Unpacking takes about 15 logical operations.
+
+| Variant | Initial position depth 8 / 9 / 10, Kiwipete depth 8, position 6 depth 7 |
+|---|---|
+| 64-byte positions, 4 GB table | 0.162 / 1.97 / 30.7 s, 14.03 s, 0.304 s |
+| 32-byte positions, 4 GB table | 0.153 / 1.86 / 28.9 s, 13.50 s, 0.292 s |
+| 32-byte positions, table from the free memory (about 5.6 GB) | 0.151 / 1.80 / 27.6 s, 12.79 s, 0.291 s |
+
+- 32-byte positions are 4-6% faster, and they free about 0.8 GB of GPU memory, which the hash table now takes.
+- The bucket comes from the high 64 bits of `key2 * numBuckets` (`__umul64hi`), so the number of buckets can be anything. The table takes the free GPU memory after the other buffers, minus a reserve of 1 GB, up to `MaxHashTableBytes`.
+- The table from the free memory is a problem if other programs use the GPU at the same time: with another program on the GPU, initial position depth 10 took 66-100 s instead of 27.6 s, probably because the GPU was shared and its memory overcommitted.
+
 The hybrid search (the CPU walks the top of the tree with its hash table) is not implemented. The GPU already handles the transpositions below the CPU levels, by merging within a batch and with its hash table between batches, and the CPU levels have only a few hundred thousand positions even at depth 10. Searching part of the tree on the CPU at about 8 Gnps would add less than 2% to the GPU's effective 300-900 Gnps.
 
 ## Testing and measurement

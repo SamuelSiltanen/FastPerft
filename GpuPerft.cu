@@ -51,12 +51,12 @@ constexpr int LeafMinBlocks = 3; // Minimum blocks per SM for the leaf kernel, l
 constexpr int MaxMoves = 256; // At most 218 legal moves in any position
 
 constexpr bool UseHashTable = true;
-constexpr size_t HashTableBytes = 4ULL << 30; // 4 GB
+constexpr size_t MaxHashTableBytes = 64ULL << 30; // The hash table takes the free GPU memory up to this
+constexpr size_t FreeMemoryReserve = 1ULL << 30; // GPU memory left free for the display and the local memory of the kernels
 constexpr bool WideHashKeys = true; // 128-bit keys in 32-byte entries instead of 64-bit keys in 16-byte entries
 constexpr int HashBucketSize = 2; // Entries per bucket
 constexpr int SlotHalves = WideHashKeys ? 2 : 1; // An entry is read and written in 16-byte halves
-constexpr size_t NumHashBuckets = HashTableBytes / (HashBucketSize * SlotHalves * sizeof(ulonglong2));
-static_assert((NumHashBuckets & (NumHashBuckets - 1)) == 0, "The number of buckets must be a power of 2");
+constexpr size_t HashBucketBytes = HashBucketSize * SlotHalves * sizeof(ulonglong2);
 constexpr int MinHashDepth = 2; // Depth-1 counts are faster to calculate than to look up
 constexpr uint64_t HashCountMask = (1ULL << 56) - 1; // The count is in the low 56 bits of the data, and the depth in the high 8 bits
 constexpr uint64_t UnknownCount = ~0ULL;
@@ -67,6 +67,46 @@ static_assert(LeafDepth >= 1 && LeafDepth <= 3 && LeafDepth <= MaxGpuDepth, "Uns
 static_assert(BatchSize <= LevelCapacity, "The batch must fit in a level");
 
 FP_HOST_DEVICE constexpr Color opponent(Color c) { return (c == White) ? Black : White; }
+
+// The positions stored on the GPU take 32 bytes instead of 64, so that they take less memory, and reading and writing
+// them is faster. Three bitboards give each square a 3-bit code (a, b, c):
+//
+//   pawn 101, knight 011, bishop 100, rook 010, queen 110, king 001, empty 000, rook that can still castle 111
+//
+// A castling right always has its rook on its corner, so the castling rights are the corners with the code 111.
+// The en passant square is always empty, and it's the only empty square in the white bitboard. The side to move
+// isn't stored, because all positions in a GPU level have the same side to move. The hash table keys include it.
+struct alignas(16) GpuPosition
+{
+    uint64_t a; // Pawns, bishops, queens, and castling rooks
+    uint64_t b; // Knights, rooks, queens, and castling rooks
+    uint64_t c; // Pawns, knights, kings, and castling rooks
+    uint64_t w; // White pieces, and the en passant square
+};
+static_assert(sizeof(GpuPosition) == 32, "A GPU position should take 32 bytes");
+
+FP_INLINE GpuPosition pack(const Position& pos)
+{
+    uint64_t castlingRooks = ((pos.state & CastlingWhiteShort) ? (1ULL << H1) : 0) | ((pos.state & CastlingWhiteLong) ? (1ULL << A1) : 0) |
+        ((pos.state & CastlingBlackShort) ? (1ULL << H8) : 0) | ((pos.state & CastlingBlackLong) ? (1ULL << A8) : 0);
+    uint64_t epSquare = (pos.state & EPValid) ? (1ULL << ((pos.state >> 5) & 63)) : 0;
+    return { pos.p | pos.bq | castlingRooks, pos.n | pos.rq | castlingRooks, pos.p | pos.n | pos.k | castlingRooks, pos.w | epSquare };
+}
+
+FP_INLINE Position unpack(const GpuPosition& pos, Color c)
+{
+    uint64_t occ = pos.a | pos.b | pos.c;
+    uint64_t castlingRooks = pos.a & pos.b & pos.c;
+    uint64_t epSquare = pos.w & ~occ;
+
+    uint64_t state = ((c == White) ? TurnWhite : 0) |
+        ((castlingRooks & (1ULL << H1)) ? CastlingWhiteShort : 0) | ((castlingRooks & (1ULL << A1)) ? CastlingWhiteLong : 0) |
+        ((castlingRooks & (1ULL << H8)) ? CastlingBlackShort : 0) | ((castlingRooks & (1ULL << A8)) ? CastlingBlackLong : 0);
+    if (epSquare) state |= (tzcnt64(epSquare) << 5) | EPValid;
+
+    return { pos.a & ~pos.b & pos.c, ~pos.a & pos.b & pos.c, pos.a & ~pos.c, (pos.b & ~pos.c) | castlingRooks, ~pos.a & ~pos.b & pos.c,
+        pos.w & occ, state, 0 };
+}
 
 template<Color C>
 __device__ __forceinline__ uint64_t countMoves(const Position& pos)
@@ -139,32 +179,29 @@ __device__ __forceinline__ uint64_t fmix64(uint64_t h)
 // Hashes the position by mixing in its fields one by one. Each step is bijective, so positions that differ in only
 // one field never collide, and otherwise the mixing makes collisions as unlikely as for random keys. A weaker mix
 // of the fields caused a wrong count for perft 10 from the initial position.
-__device__ __forceinline__ uint64_t hashPosition(const Position& pos, uint64_t seed)
+__device__ __forceinline__ uint64_t hashPosition(const GpuPosition& pos, uint64_t seed)
 {
     uint64_t h = seed;
-    h = fmix64(h ^ pos.p);
-    h = fmix64(h ^ pos.n);
-    h = fmix64(h ^ pos.bq);
-    h = fmix64(h ^ pos.rq);
-    h = fmix64(h ^ pos.k);
+    h = fmix64(h ^ pos.a);
+    h = fmix64(h ^ pos.b);
+    h = fmix64(h ^ pos.c);
     h = fmix64(h ^ pos.w);
-    h = fmix64(h ^ pos.state);
     return h;
 }
 
 // Two independent hashes of a position, for the hash table key and the bucket index
-__device__ __forceinline__ uint64_t hashKey(const Position& pos) { return hashPosition(pos, 0x243f6a8885a308d3ULL); }
-__device__ __forceinline__ uint64_t hashIndex(const Position& pos) { return hashPosition(pos, 0x13198a2e03707344ULL); }
+__device__ __forceinline__ uint64_t hashKey(const GpuPosition& pos) { return hashPosition(pos, 0x243f6a8885a308d3ULL); }
+__device__ __forceinline__ uint64_t hashIndex(const GpuPosition& pos) { return hashPosition(pos, 0x13198a2e03707344ULL); }
 
-__device__ __forceinline__ bool samePosition(const Position& a, const Position& b)
+__device__ __forceinline__ bool samePosition(const GpuPosition& a, const GpuPosition& b)
 {
-    return a.p == b.p && a.n == b.n && a.bq == b.bq && a.rq == b.rq && a.k == b.k && a.w == b.w && a.state == b.state;
+    return a.a == b.a && a.b == b.b && a.c == b.c && a.w == b.w;
 }
 
 // Searches the positions given by the indices, or all positions if there are no indices. The number of indices
 // is read on the GPU, so that the CPU doesn't need to wait for it.
 template<Color C, int Depth>
-__global__ void __launch_bounds__(BlockSize, LeafMinBlocks) leafKernel(const Position* positions, const uint32_t* indices,
+__global__ void __launch_bounds__(BlockSize, LeafMinBlocks) leafKernel(const GpuPosition* positions, const uint32_t* indices,
     const uint32_t* numIndices, uint32_t numPositions, uint64_t* nodeCounts)
 {
     loadMoveTables();
@@ -174,7 +211,7 @@ __global__ void __launch_bounds__(BlockSize, LeafMinBlocks) leafKernel(const Pos
     if (index < count)
     {
         uint32_t position = indices ? indices[index] : index;
-        nodeCounts[position] = perftThread<C, Depth>(positions[position]);
+        nodeCounts[position] = perftThread<C, Depth>(unpack(positions[position], C));
     }
 }
 
@@ -187,21 +224,21 @@ struct IsUnknown
 
 // Counts the moves of the positions that need to be searched
 template<Color C>
-__global__ void __launch_bounds__(BlockSize) countKernel(const Position* positions, const uint64_t* nodeCounts, uint32_t numPositions, uint32_t* counts)
+__global__ void __launch_bounds__(BlockSize) countKernel(const GpuPosition* positions, const uint64_t* nodeCounts, uint32_t numPositions, uint32_t* counts)
 {
     loadMoveTables();
 
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numPositions)
     {
-        counts[index] = (nodeCounts[index] == UnknownCount) ? static_cast<uint32_t>(countMoves<C>(positions[index])) : 0;
+        counts[index] = (nodeCounts[index] == UnknownCount) ? static_cast<uint32_t>(countMoves<C>(unpack(positions[index], C))) : 0;
     }
 }
 
 // Generates the moves of the positions [begin, end) that need to be searched to the offsets given by the prefix sum
 // of the move counts, relative to the first one. Also stores the index of the position of each move.
 template<Color C>
-__global__ void __launch_bounds__(BlockSize) generateKernel(const Position* positions, const uint64_t* nodeCounts, uint32_t begin, uint32_t end,
+__global__ void __launch_bounds__(BlockSize) generateKernel(const GpuPosition* positions, const uint64_t* nodeCounts, uint32_t begin, uint32_t end,
     const uint32_t* offsets, Move* moves, uint32_t* parents)
 {
     loadMoveTables();
@@ -210,7 +247,7 @@ __global__ void __launch_bounds__(BlockSize) generateKernel(const Position* posi
     if (index < end && nodeCounts[index] == UnknownCount)
     {
         uint32_t first = offsets[index] - offsets[begin];
-        Move* last = generateMoves<C>(positions[index], moves + first);
+        Move* last = generateMoves<C>(unpack(positions[index], C), moves + first);
         uint32_t numMoves = static_cast<uint32_t>(last - (moves + first));
         for (uint32_t i = 0; i < numMoves; ++i)
         {
@@ -220,15 +257,15 @@ __global__ void __launch_bounds__(BlockSize) generateKernel(const Position* posi
 }
 
 template<Color C>
-__global__ void __launch_bounds__(BlockSize) makeKernel(const Position* positions, const Move* moves, const uint32_t* parents,
-    uint32_t numMoves, Position* children)
+__global__ void __launch_bounds__(BlockSize) makeKernel(const GpuPosition* positions, const Move* moves, const uint32_t* parents,
+    uint32_t numMoves, GpuPosition* children)
 {
     loadMoveTables();
 
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numMoves)
     {
-        children[index] = make<C>(positions[parents[index]], moves[index]);
+        children[index] = pack(make<C>(unpack(positions[parents[index]], C), moves[index]));
     }
 }
 
@@ -251,7 +288,7 @@ __global__ void aggregateKernel(uint32_t begin, uint32_t end, const uint32_t* of
     }
 }
 
-__global__ void keyKernel(const Position* positions, uint32_t numPositions, uint32_t* keys, uint32_t* indices)
+__global__ void keyKernel(const GpuPosition* positions, uint32_t numPositions, uint32_t* keys, uint32_t* indices)
 {
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numPositions)
@@ -264,7 +301,7 @@ __global__ void keyKernel(const Position* positions, uint32_t numPositions, uint
 // Marks the first position of each run of equal positions in the order sorted by the keys. Different positions
 // may have the same key, so equal positions may end up in different runs, which only means that they are searched
 // more than once.
-__global__ void headKernel(const Position* positions, const uint32_t* sortedKeys, const uint32_t* sortedIndices, uint32_t numPositions,
+__global__ void headKernel(const GpuPosition* positions, const uint32_t* sortedKeys, const uint32_t* sortedIndices, uint32_t numPositions,
     uint32_t* heads)
 {
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -277,8 +314,8 @@ __global__ void headKernel(const Position* positions, const uint32_t* sortedKeys
 
 // Stores the first position of each run, and maps all positions to their run. runs is the inclusive prefix sum
 // of the heads, so it gives the index of the run, plus one.
-__global__ void mergeKernel(const Position* positions, const uint32_t* sortedIndices, const uint32_t* heads, const uint32_t* runs,
-    uint32_t numPositions, Position* runPositions, uint32_t* runOf)
+__global__ void mergeKernel(const GpuPosition* positions, const uint32_t* sortedIndices, const uint32_t* heads, const uint32_t* runs,
+    uint32_t numPositions, GpuPosition* runPositions, uint32_t* runOf)
 {
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numPositions)
@@ -297,21 +334,30 @@ __global__ void mergeKernel(const Position* positions, const uint32_t* sortedInd
 // count in the low 56 bits, zero for an empty entry. With wide keys, a second half has the second 64-bit key XORed
 // with the data. If two threads write the same entry at the same time, the entry may get parts from both, and then
 // the keys don't match the data, like in the CPU hash table. The bucket comes from the second key, so with wide keys,
-// 128 - log2(NumHashBuckets) bits of the keys separate the positions in a bucket.
+// about 128 - log2(number of buckets) bits of the keys separate the positions in a bucket.
 struct HashKeys
 {
     uint64_t key1;
     uint64_t key2;
 };
 
-__device__ __forceinline__ HashKeys hashKeys(const Position& pos)
+// The side to move isn't stored in the positions, so it's mixed into the keys
+__device__ __forceinline__ HashKeys hashKeys(const GpuPosition& pos, Color c)
 {
-    return { hashKey(pos), hashIndex(pos) };
+    uint64_t colorSalt = (c == White) ? 0xa4093822299f31d0ULL : 0;
+    return { hashKey(pos) ^ colorSalt, hashIndex(pos) ^ colorSalt };
 }
 
-__device__ __forceinline__ ulonglong2* hashBucket(ulonglong2* table, const HashKeys& keys)
+struct GpuHashTable
 {
-    return table + (keys.key2 & (NumHashBuckets - 1)) * HashBucketSize * SlotHalves;
+    ulonglong2* entries;
+    uint64_t numBuckets; // Any number, so that the table can take all free memory
+};
+
+// The high bits of the product map the key evenly to the buckets
+__device__ __forceinline__ ulonglong2* hashBucket(const GpuHashTable& table, const HashKeys& keys)
+{
+    return table.entries + __umul64hi(keys.key2, table.numBuckets) * HashBucketSize * SlotHalves;
 }
 
 // Returns the data of the entry if its keys match, and zero otherwise
@@ -337,12 +383,12 @@ __device__ __forceinline__ void storeEntry(ulonglong2* entry, const HashKeys& ke
     }
 }
 
-__global__ void probeKernel(const Position* positions, uint32_t numPositions, uint64_t depth, ulonglong2* table, uint64_t* nodeCounts)
+__global__ void probeKernel(const GpuPosition* positions, uint32_t numPositions, Color c, uint64_t depth, GpuHashTable table, uint64_t* nodeCounts)
 {
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numPositions)
     {
-        HashKeys keys = hashKeys(positions[index]);
+        HashKeys keys = hashKeys(positions[index], c);
         const ulonglong2* bucket = hashBucket(table, keys);
         uint64_t count = UnknownCount;
         for (int i = 0; i < HashBucketSize; ++i)
@@ -360,8 +406,8 @@ __global__ void probeKernel(const Position* positions, uint32_t numPositions, ui
 
 // Stores the node counts of the positions given by the indices, or of all positions if there are no indices.
 // Replaces the same position, an empty entry, or the entry with the smallest depth.
-__global__ void insertKernel(const Position* positions, const uint32_t* indices, const uint32_t* numIndices, uint32_t numPositions,
-    uint64_t depth, const uint64_t* nodeCounts, ulonglong2* table)
+__global__ void insertKernel(const GpuPosition* positions, const uint32_t* indices, const uint32_t* numIndices, uint32_t numPositions,
+    Color c, uint64_t depth, const uint64_t* nodeCounts, GpuHashTable table)
 {
     uint32_t thread = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t count = indices ? *numIndices : numPositions;
@@ -370,7 +416,7 @@ __global__ void insertKernel(const Position* positions, const uint32_t* indices,
     uint32_t index = indices ? indices[thread] : thread;
     if (nodeCounts[index] <= HashCountMask)
     {
-        HashKeys keys = hashKeys(positions[index]);
+        HashKeys keys = hashKeys(positions[index], c);
         ulonglong2* bucket = hashBucket(table, keys);
         int victim = 0;
         uint64_t victimDepth = ~0ULL;
@@ -395,7 +441,7 @@ __global__ void insertKernel(const Position* positions, const uint32_t* indices,
 
 // Counts the moves of the positions given by the indices
 template<Color C>
-__global__ void __launch_bounds__(BlockSize) countSelectedKernel(const Position* positions, const uint32_t* indices, uint32_t numIndices,
+__global__ void __launch_bounds__(BlockSize) countSelectedKernel(const GpuPosition* positions, const uint32_t* indices, uint32_t numIndices,
     uint32_t* counts)
 {
     loadMoveTables();
@@ -403,7 +449,7 @@ __global__ void __launch_bounds__(BlockSize) countSelectedKernel(const Position*
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numIndices)
     {
-        counts[index] = static_cast<uint32_t>(countMoves<C>(positions[indices[index]]));
+        counts[index] = static_cast<uint32_t>(countMoves<C>(unpack(positions[indices[index]], C)));
     }
 }
 
@@ -464,7 +510,7 @@ uint32_t numBlocks(uint32_t numThreads)
 
 struct Level
 {
-    Position* positions; // Merged positions of the level
+    GpuPosition* positions; // Merged positions of the level
     uint64_t* nodeCounts; // Node count of the subtree of each merged position
     uint32_t* runOf; // The merged position of each position before merging
     uint32_t* counts; // Number of moves of each position, plus one zero at the end for the total
@@ -476,7 +522,7 @@ struct Level
 // Buffers for merging the duplicate positions of a level
 struct Merge
 {
-    Position* positions; // Swapped with the positions of the merged level
+    GpuPosition* positions; // Swapped with the positions of the merged level
     uint32_t* keys[2];
     uint32_t* indices[2];
     uint32_t* heads;
@@ -487,8 +533,8 @@ struct Merge
 
 Level levels[NumLevels];
 Merge merge;
-ulonglong2* gpuHashTable;
-Position* hostBatch; // Pinned, so that the copy to the GPU is fast
+GpuHashTable gpuHashTable;
+GpuPosition* hostBatch; // Pinned, so that the copy to the GPU is fast
 uint32_t* deviceChunk; // End and number of moves of a chunk
 uint32_t* hostChunk;
 uint32_t* hostNumUnique;
@@ -503,7 +549,7 @@ int batchSize = 0;
 Color batchColor = White;
 
 template<Color C>
-void launchLeafKernel(int depth, const Position* positions, const uint32_t* indices, const uint32_t* numIndices, uint32_t numPositions,
+void launchLeafKernel(int depth, const GpuPosition* positions, const uint32_t* indices, const uint32_t* numIndices, uint32_t numPositions,
     uint64_t* nodeCounts)
 {
     switch (depth)
@@ -562,7 +608,7 @@ void searchLevel(int levelIndex, uint32_t numPositions, int depth)
     bool useHashTable = UseHashTable && depth >= MinHashDepth;
     if (useHashTable)
     {
-        probeKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, numPositions, depth, gpuHashTable, level.nodeCounts);
+        probeKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, numPositions, C, depth, gpuHashTable, level.nodeCounts);
     }
     else
     {
@@ -592,7 +638,7 @@ void searchLevel(int levelIndex, uint32_t numPositions, int depth)
                 }
             }
             launchLeafKernel<C>(depth, level.positions, indices, deviceNumSelected, numPositions, level.nodeCounts);
-            insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, indices, deviceNumSelected, numPositions, depth,
+            insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, indices, deviceNumSelected, numPositions, C, depth,
                 level.nodeCounts, gpuHashTable);
             CUDA_CHECK(cudaGetLastError());
         }
@@ -639,7 +685,7 @@ void searchLevel(int levelIndex, uint32_t numPositions, int depth)
 
     if (useHashTable)
     {
-        insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, nullptr, nullptr, numPositions, depth, level.nodeCounts,
+        insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, nullptr, nullptr, numPositions, C, depth, level.nodeCounts,
             gpuHashTable);
         CUDA_CHECK(cudaGetLastError());
     }
@@ -650,7 +696,7 @@ void searchBatch()
     if (batchSize == 0) return;
 
     Level& level = levels[0];
-    CUDA_CHECK(cudaMemcpy(level.positions, hostBatch, batchSize * sizeof(Position), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(level.positions, hostBatch, batchSize * sizeof(GpuPosition), cudaMemcpyHostToDevice));
     if (batchColor == White)
     {
         searchLevel<White>(0, batchSize, gpuDepth);
@@ -671,7 +717,7 @@ void addPosition(const Position& pos)
     {
         searchBatch();
     }
-    hostBatch[batchSize++] = pos;
+    hostBatch[batchSize++] = pack(pos);
 }
 
 // Collects the positions at the given depth into batches
@@ -731,7 +777,7 @@ bool initGpuPerft()
     for (int i = 0; i < NumLevels; ++i)
     {
         Level& level = levels[i];
-        CUDA_CHECK(cudaMalloc(&level.positions, LevelCapacity * sizeof(Position)));
+        CUDA_CHECK(cudaMalloc(&level.positions, LevelCapacity * sizeof(GpuPosition)));
         CUDA_CHECK(cudaMalloc(&level.nodeCounts, LevelCapacity * sizeof(uint64_t)));
         CUDA_CHECK(cudaMalloc(&level.runOf, LevelCapacity * sizeof(uint32_t)));
         if (i < NumLevels - 1)
@@ -748,7 +794,7 @@ bool initGpuPerft()
         }
     }
 
-    CUDA_CHECK(cudaMalloc(&merge.positions, LevelCapacity * sizeof(Position)));
+    CUDA_CHECK(cudaMalloc(&merge.positions, LevelCapacity * sizeof(GpuPosition)));
     for (int i = 0; i < 2; ++i)
     {
         CUDA_CHECK(cudaMalloc(&merge.keys[i], LevelCapacity * sizeof(uint32_t)));
@@ -773,11 +819,21 @@ bool initGpuPerft()
 
     if (UseHashTable)
     {
-        CUDA_CHECK(cudaMalloc(&gpuHashTable, HashTableBytes));
-        CUDA_CHECK(cudaMemset(gpuHashTable, 0, HashTableBytes));
+        // The hash table takes the free memory after the other buffers, except for a reserve
+        size_t freeBytes = 0, totalBytes = 0;
+        CUDA_CHECK(cudaMemGetInfo(&freeBytes, &totalBytes));
+        size_t tableBytes = std::min(MaxHashTableBytes, (freeBytes > FreeMemoryReserve) ? freeBytes - FreeMemoryReserve : 0);
+        gpuHashTable.numBuckets = tableBytes / HashBucketBytes;
+        if (gpuHashTable.numBuckets == 0)
+        {
+            fprintf(stderr, "Not enough GPU memory for the hash table\n");
+            return false;
+        }
+        CUDA_CHECK(cudaMalloc(&gpuHashTable.entries, gpuHashTable.numBuckets * HashBucketBytes));
+        CUDA_CHECK(cudaMemset(gpuHashTable.entries, 0, gpuHashTable.numBuckets * HashBucketBytes));
     }
 
-    CUDA_CHECK(cudaMallocHost(&hostBatch, BatchSize * sizeof(Position)));
+    CUDA_CHECK(cudaMallocHost(&hostBatch, BatchSize * sizeof(GpuPosition)));
     CUDA_CHECK(cudaMalloc(&deviceChunk, 2 * sizeof(uint32_t)));
     CUDA_CHECK(cudaMallocHost(&hostChunk, 2 * sizeof(uint32_t)));
     CUDA_CHECK(cudaMallocHost(&hostNumUnique, sizeof(uint32_t)));
@@ -787,7 +843,7 @@ bool initGpuPerft()
     runGpuPerft(Position(), MaxGpuDepth);
     if (UseHashTable)
     {
-        CUDA_CHECK(cudaMemset(gpuHashTable, 0, HashTableBytes));
+        CUDA_CHECK(cudaMemset(gpuHashTable.entries, 0, gpuHashTable.numBuckets * HashBucketBytes));
     }
     CUDA_CHECK(cudaDeviceSynchronize()); // cudaMemset is asynchronous, so wait for it here instead of in the first search
 
@@ -847,7 +903,7 @@ void releaseGpuPerft()
     CUDA_CHECK(cudaFree(deviceNumSelected));
     if (UseHashTable)
     {
-        CUDA_CHECK(cudaFree(gpuHashTable));
+        CUDA_CHECK(cudaFree(gpuHashTable.entries));
     }
     CUDA_CHECK(cudaFreeHost(hostBatch));
     CUDA_CHECK(cudaFree(deviceChunk));
