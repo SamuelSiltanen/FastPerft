@@ -83,6 +83,28 @@ For each level of a batch:
 - 2-3 CUDA streams to overlap upload, kernels, and readback.
 - Expected: 40-60 Gnps or more without a hash table, against 8.4 Gnps on the CPU.
 
+Status: done.
+
+- The GPU searches the last 5 plies (`MaxGpuDepth`). The upper 3 are breadth first as described above, and the last 2 (`LeafDepth`) are depth first in each thread, using the phase 1 code. Storing the last level and counting it in bulk (leaf depth 1) moves too much memory, and leaf depth 3 spills registers.
+- All positions of a level have the same side to move, so the kernels are templated on the color.
+- If the moves of a level don't fit in the next level (4M positions), the level is split into chunks with a binary search over the prefix sums (one thread), and the chunks are searched one after another. Each level has its own buffers, so the memory use is fixed (about 1 GB).
+- The kernels are loaded eagerly (`CUDA_MODULE_LOADING`), and a warm-up search allocates their local memory in `initGpuPerft`, so that small searches don't pay about 35 ms for them.
+- The leaf kernel takes 97% of the GPU time (Nsight Systems, Kiwipete depth 7), and the breadth-first levels about 3%.
+- Tuning (initial position depth 8 / Kiwipete depth 7 / position 6 depth 7, in seconds): leaf depth 1: 1.86 / 4.63 / 4.10, leaf depth 2: 1.14 / 2.68 / 2.17, leaf depth 3: 2.14 / 4.60 / 3.76. GPU depth 4, 5, or 6 and a level capacity of 2M-16M positions make no difference. 256 threads per block is 11% faster than 128, and limiting the registers of the leaf kernel to 3 blocks per SM (`LeafMinBlocks`) another 12%: 0.87 / 2.10 / 1.69.
+- Correctness: the test positions match the published values (also initial position depth 9), and the differential test had 0 mismatches in 12,300 comparisons.
+
+| Position | Depth | Phase 1 | Phase 2 |
+|---|---|---|---|
+| Initial position | 7 | 0.113 s (28.4 Gnps) | 0.038 s (83.6 Gnps) |
+| Initial position | 8 | 2.31 s (36.8 Gnps) | 0.885 s (96.0 Gnps) |
+| Initial position | 9 | | 22.3 s (109.4 Gnps) |
+| Kiwipete | 6 | 0.144 s (55.8 Gnps) | 0.049 s (165.6 Gnps) |
+| Kiwipete | 7 | 4.85 s (77.2 Gnps) | 2.07 s (180.5 Gnps) |
+
+Findings for phase 3:
+
+- Optimizing the leaf kernel is what matters now. It generates the moves of a position into a local array, and makes and counts each of them. Candidates: the slider lookups (phase 3), the kindergarten and other tables in shared memory, fewer registers, and the warp divergence from positions with different numbers of moves and from the check evasions.
+
 ## Phase 3: Slider lookups on the GPU
 
 Measure with the same harness: kindergarten in shared memory, plain magic in L2 (the compressed rook table is about 800 KB, the L2 is 4 MB), Kogge-Stone (no tables), and hyperbola quintessence with `__brevll`. The winner depends on register pressure and occupancy more than on instruction counts. Profile with Nsight Compute.
