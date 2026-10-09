@@ -14,9 +14,12 @@
 #include <cub/device/device_select.cuh>
 #include <cub/iterator/counting_input_iterator.cuh>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #define CUDA_CHECK(call)                                                                        \
     do                                                                                          \
@@ -75,7 +78,8 @@ FP_HOST_DEVICE constexpr Color opponent(Color c) { return (c == White) ? Black :
 //   pawn 101, knight 011, bishop 100, rook 010, queen 110, king 001, empty 000, rook that can still castle 111
 //
 // A castling right always has its rook on its corner, so the castling rights are the corners with the code 111.
-// The en passant square is always empty, and it's the only empty square in the white bitboard. The side to move
+// The en passant square is always empty, and it's the only empty square in the white bitboard. It's left out if no pawn
+// can capture en passant. The side to move
 // isn't stored, because all positions in a GPU level have the same side to move. The hash table keys include it.
 struct alignas(16) GpuPosition
 {
@@ -90,7 +94,18 @@ FP_INLINE GpuPosition pack(const Position& pos)
 {
     uint64_t castlingRooks = ((pos.state & CastlingWhiteShort) ? (1ULL << H1) : 0) | ((pos.state & CastlingWhiteLong) ? (1ULL << A1) : 0) |
         ((pos.state & CastlingBlackShort) ? (1ULL << H8) : 0) | ((pos.state & CastlingBlackLong) ? (1ULL << A8) : 0);
-    uint64_t epSquare = (pos.state & EPValid) ? (1ULL << ((pos.state >> 5) & 63)) : 0;
+    // The en passant square is set after every double pawn push, but it matters only if a pawn of the side to move is
+    // next to the pushed pawn. Otherwise it's left out, so that the position is equal to the same position without it.
+    uint64_t epSquare = 0;
+    if (pos.state & EPValid)
+    {
+        bool white = (pos.state & TurnWhite) != 0;
+        uint64_t square = 1ULL << ((pos.state >> 5) & 63);
+        uint64_t pushedPawn = white ? (square << 8) : (square >> 8);
+        uint64_t neighbors = ((pushedPawn & ~0x8080808080808080ULL) << 1) | ((pushedPawn & ~0x0101010101010101ULL) >> 1);
+        uint64_t ourPawns = pos.p & (white ? pos.w : ~pos.w);
+        if (neighbors & ourPawns) epSquare = square;
+    }
     return { pos.p | pos.bq | castlingRooks, pos.n | pos.rq | castlingRooks, pos.p | pos.n | pos.k | castlingRooks, pos.w | epSquare };
 }
 
@@ -215,7 +230,7 @@ __device__ uint64_t perftThread(const Position& pos)
 }
 
 // The finalizer of MurmurHash3, a bijective mix of all bits
-__device__ __forceinline__ uint64_t fmix64(uint64_t h)
+FP_INLINE uint64_t fmix64(uint64_t h)
 {
     h ^= h >> 33;
     h *= 0xff51afd7ed558ccdULL;
@@ -228,7 +243,7 @@ __device__ __forceinline__ uint64_t fmix64(uint64_t h)
 // Hashes the position by mixing in its fields one by one. Each step is bijective, so positions that differ in only
 // one field never collide, and otherwise the mixing makes collisions as unlikely as for random keys. A weaker mix
 // of the fields caused a wrong count for perft 10 from the initial position.
-__device__ __forceinline__ uint64_t hashPosition(const GpuPosition& pos, uint64_t seed)
+FP_INLINE uint64_t hashPosition(const GpuPosition& pos, uint64_t seed)
 {
     uint64_t h = seed;
     h = fmix64(h ^ pos.a);
@@ -520,12 +535,14 @@ __global__ void fillKernel(uint64_t* values, uint32_t count, uint64_t value)
     }
 }
 
-// Adds the node counts of the positions of a batch, through the mapping to the merged positions, to the result
-__global__ void sumKernel(const uint64_t* nodeCounts, const uint32_t* runOf, uint32_t numPositions, unsigned long long* result)
+// Adds the node counts of the positions of a batch, through the mapping to the merged positions, and multiplied by
+// the weights of the positions, to the result
+__global__ void sumKernel(const uint64_t* nodeCounts, const uint32_t* runOf, const uint64_t* weights, uint32_t numPositions,
+    unsigned long long* result)
 {
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
 
-    unsigned long long count = (index < numPositions) ? nodeCounts[runOf[index]] : 0;
+    unsigned long long count = (index < numPositions) ? nodeCounts[runOf[index]] * weights[index] : 0;
     for (int offset = 16; offset > 0; offset /= 2)
     {
         count += __shfl_down_sync(0xffffffff, count, offset);
@@ -584,6 +601,8 @@ Level levels[NumLevels];
 Merge merge;
 GpuHashTable gpuHashTable;
 GpuPosition* hostBatch; // Pinned, so that the copy to the GPU is fast
+uint64_t* hostWeights; // Weight of each position of the batch, the number of move sequences that lead to it
+uint64_t* deviceWeights;
 uint32_t* deviceChunk; // End and number of moves of a chunk
 uint32_t* hostChunk;
 uint32_t* hostNumUnique;
@@ -746,6 +765,7 @@ void searchBatch()
 
     Level& level = levels[0];
     CUDA_CHECK(cudaMemcpy(level.positions, hostBatch, batchSize * sizeof(GpuPosition), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(deviceWeights, hostWeights, batchSize * sizeof(uint64_t), cudaMemcpyHostToDevice));
     if (batchColor == White)
     {
         searchLevel<White>(0, batchSize, gpuDepth);
@@ -755,27 +775,28 @@ void searchBatch()
         searchLevel<Black>(0, batchSize, gpuDepth);
     }
 
-    sumKernel<<<numBlocks(batchSize), BlockSize>>>(level.nodeCounts, level.runOf, batchSize, deviceResult);
+    sumKernel<<<numBlocks(batchSize), BlockSize>>>(level.nodeCounts, level.runOf, deviceWeights, batchSize, deviceResult);
     CUDA_CHECK(cudaGetLastError());
     batchSize = 0;
 }
 
-void addPosition(const Position& pos)
+void addPosition(const GpuPosition& pos, uint64_t weight)
 {
     if (batchSize == BatchSize)
     {
         searchBatch();
     }
-    hostBatch[batchSize++] = pack(pos);
+    hostWeights[batchSize] = weight;
+    hostBatch[batchSize++] = pos;
 }
 
-// Collects the positions at the given depth into batches
+// Collects the positions at the given depth into batches, with the weight of the position
 template<Color C>
-void expand(const Position& pos, int depth)
+void expand(const Position& pos, int depth, uint64_t weight = 1)
 {
     if (depth == 0)
     {
-        addPosition(pos);
+        addPosition(pack(pos), weight);
         return;
     }
 
@@ -802,8 +823,177 @@ void expand(const Position& pos, int depth)
 
     for (const Move* move = moves; move < end; ++move)
     {
-        expand<opponent(C)>(make<C>(pos, *move), depth - 1);
+        expand<opponent(C)>(make<C>(pos, *move), depth - 1, weight);
     }
+}
+
+// A unique position at the split ply, packed like GpuPosition but without the alignment, and the number of move
+// sequences that lead to it
+struct UniqueEntry
+{
+    uint64_t a, b, c, w;
+    uint64_t weight;
+};
+
+FP_INLINE GpuPosition toGpuPosition(const UniqueEntry& entry) { return { entry.a, entry.b, entry.c, entry.w }; }
+
+uint64_t entryHash(const UniqueEntry& entry)
+{
+    return hashPosition(toGpuPosition(entry), 0x452821e638d01377ULL);
+}
+
+bool entryLess(const UniqueEntry& x, const UniqueEntry& y)
+{
+    if (x.a != y.a) return x.a < y.a;
+    if (x.b != y.b) return x.b < y.b;
+    if (x.c != y.c) return x.c < y.c;
+    return x.w < y.w;
+}
+
+bool samePosition(const UniqueEntry& x, const UniqueEntry& y)
+{
+    return x.a == y.a && x.b == y.b && x.c == y.c && x.w == y.w;
+}
+
+constexpr size_t MaxChildrenPerPass = 200 * 1000 * 1000; // About 8 GB of children at a time, more takes several passes
+constexpr size_t EstimatedMovesPerPosition = 40;
+
+// Generates the children of the parents (side to move C) whose hash is in the given partition, and merges the
+// duplicates, adding their weights. The threads generate the children into buckets by their hash, so that the
+// duplicates are always in the same bucket, and then each thread sorts and merges its own bucket.
+template<Color C>
+std::vector<UniqueEntry> expandPartition(const std::vector<UniqueEntry>& parents, uint64_t partition, uint64_t numPartitions, int numThreads)
+{
+    std::vector<std::vector<std::vector<UniqueEntry>>> buckets(numThreads, std::vector<std::vector<UniqueEntry>>(numThreads));
+    std::vector<std::thread> threads;
+    for (int t = 0; t < numThreads; ++t)
+    {
+        threads.emplace_back([&, t]()
+        {
+            size_t begin = parents.size() * t / numThreads;
+            size_t end = parents.size() * (t + 1) / numThreads;
+            for (size_t i = begin; i < end; ++i)
+            {
+                Position pos = unpack(toGpuPosition(parents[i]), C);
+                Move moves[MaxMoves];
+                uint64_t occ = pos.p | pos.n | pos.bq | pos.rq | pos.k;
+                Pins pins;
+                uint64_t checkers = findPinsAndCheckers<C>(pos, occ, pins);
+                uint64_t pArea = findProtectionArea<C>(pos, occ);
+                Move* last = moves;
+                if (checkers)
+                {
+                    last = generateEvasions<C>(pos, last, occ, pArea, checkers, pins);
+                }
+                else
+                {
+                    last = generateP<C>(pos, last, occ, pins);
+                    last = generateN<C>(pos, last, occ, pins.pinnedSENW | pins.pinnedSWNE | pins.pinnedSN | pins.pinnedWE);
+                    last = generateSliders<C>(pos, last, occ, pins);
+                    last = generateK<C>(pos, last, occ, pArea);
+                    last = generateCastling<C>(pos, last, occ, pArea);
+                }
+                for (const Move* move = moves; move < last; ++move)
+                {
+                    GpuPosition child = pack(make<C>(pos, *move));
+                    UniqueEntry entry = { child.a, child.b, child.c, child.w, parents[i].weight };
+                    uint64_t hash = entryHash(entry);
+                    if (hash % numPartitions != partition) continue;
+                    buckets[t][(hash / numPartitions) % numThreads].push_back(entry);
+                }
+            }
+        });
+    }
+    for (std::thread& thread : threads) thread.join();
+    threads.clear();
+
+    std::vector<std::vector<UniqueEntry>> merged(numThreads);
+    for (int b = 0; b < numThreads; ++b)
+    {
+        threads.emplace_back([&, b]()
+        {
+            std::vector<UniqueEntry>& bucket = merged[b];
+            size_t size = 0;
+            for (int t = 0; t < numThreads; ++t) size += buckets[t][b].size();
+            bucket.reserve(size);
+            for (int t = 0; t < numThreads; ++t)
+            {
+                bucket.insert(bucket.end(), buckets[t][b].begin(), buckets[t][b].end());
+                std::vector<UniqueEntry>().swap(buckets[t][b]);
+            }
+            std::sort(bucket.begin(), bucket.end(), entryLess);
+            size_t unique = 0;
+            for (size_t i = 0; i < bucket.size(); ++i)
+            {
+                if (unique > 0 && samePosition(bucket[unique - 1], bucket[i]))
+                {
+                    bucket[unique - 1].weight += bucket[i].weight;
+                }
+                else
+                {
+                    bucket[unique++] = bucket[i];
+                }
+            }
+            bucket.resize(unique);
+        });
+    }
+    for (std::thread& thread : threads) thread.join();
+
+    std::vector<UniqueEntry> result;
+    size_t size = 0;
+    for (const std::vector<UniqueEntry>& bucket : merged) size += bucket.size();
+    result.reserve(size);
+    for (std::vector<UniqueEntry>& bucket : merged)
+    {
+        result.insert(result.end(), bucket.begin(), bucket.end());
+        std::vector<UniqueEntry>().swap(bucket);
+    }
+    return result;
+}
+
+std::vector<UniqueEntry> expandPartition(const std::vector<UniqueEntry>& parents, Color c, uint64_t partition, uint64_t numPartitions, int numThreads)
+{
+    return (c == White) ? expandPartition<White>(parents, partition, numPartitions, numThreads) :
+        expandPartition<Black>(parents, partition, numPartitions, numThreads);
+}
+
+uint64_t numPartitionsFor(size_t numParents)
+{
+    size_t estimatedChildren = numParents * EstimatedMovesPerPosition;
+    return std::max<uint64_t>(1, (estimatedChildren + MaxChildrenPerPass - 1) / MaxChildrenPerPass);
+}
+
+// Searches the unique positions (side to move c) to the given depth, and returns the sum of their node counts
+// multiplied by their weights. Above the GPU depth, the CPU expands the positions, and the expanded positions get the
+// weight of the unique position.
+uint64_t searchWeighted(const std::vector<UniqueEntry>& entries, Color c, int depth)
+{
+    gpuDepth = (depth < MaxGpuDepth) ? depth : MaxGpuDepth;
+    int cpuDepth = depth - gpuDepth;
+    batchColor = (cpuDepth % 2 == 0) ? c : opponent(c);
+    batchSize = 0;
+    CUDA_CHECK(cudaMemset(deviceResult, 0, sizeof(unsigned long long)));
+
+    for (const UniqueEntry& entry : entries)
+    {
+        if (cpuDepth == 0)
+        {
+            addPosition(toGpuPosition(entry), entry.weight);
+        }
+        else if (c == White)
+        {
+            expand<White>(unpack(toGpuPosition(entry), White), cpuDepth, entry.weight);
+        }
+        else
+        {
+            expand<Black>(unpack(toGpuPosition(entry), Black), cpuDepth, entry.weight);
+        }
+    }
+    searchBatch();
+
+    unsigned long long result = 0;
+    CUDA_CHECK(cudaMemcpy(&result, deviceResult, sizeof(result), cudaMemcpyDeviceToHost));
+    return result;
 }
 
 } // namespace
@@ -883,6 +1073,8 @@ bool initGpuPerft()
     }
 
     CUDA_CHECK(cudaMallocHost(&hostBatch, BatchSize * sizeof(GpuPosition)));
+    CUDA_CHECK(cudaMallocHost(&hostWeights, BatchSize * sizeof(uint64_t)));
+    CUDA_CHECK(cudaMalloc(&deviceWeights, BatchSize * sizeof(uint64_t)));
     CUDA_CHECK(cudaMalloc(&deviceChunk, 2 * sizeof(uint32_t)));
     CUDA_CHECK(cudaMallocHost(&hostChunk, 2 * sizeof(uint32_t)));
     CUDA_CHECK(cudaMallocHost(&hostNumUnique, sizeof(uint32_t)));
@@ -926,6 +1118,50 @@ uint64_t runGpuPerft(const Position& pos, int depth)
     return result;
 }
 
+uint64_t runGpuPerftSplit(const Position& pos, int depth, int splitDepth)
+{
+    if (splitDepth <= 0 || splitDepth >= depth) return runGpuPerft(pos, depth);
+
+    int numThreads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+    auto start = std::chrono::high_resolution_clock::now();
+    double gpuSeconds = 0;
+
+    // The unique positions up to the ply before the split, one level at a time
+    Color c = (pos.state & TurnWhite) ? White : Black;
+    GpuPosition root = pack(pos);
+    std::vector<UniqueEntry> level = { { root.a, root.b, root.c, root.w, 1 } };
+    for (int ply = 1; ply < splitDepth; ++ply)
+    {
+        uint64_t numPartitions = numPartitionsFor(level.size());
+        std::vector<UniqueEntry> next;
+        for (uint64_t partition = 0; partition < numPartitions; ++partition)
+        {
+            std::vector<UniqueEntry> part = expandPartition(level, c, partition, numPartitions, numThreads);
+            next.insert(next.end(), part.begin(), part.end());
+        }
+        level.swap(next);
+        c = opponent(c);
+    }
+
+    // The unique positions at the split ply are generated and searched one partition at a time
+    uint64_t numPartitions = numPartitionsFor(level.size());
+    uint64_t numUnique = 0;
+    uint64_t count = 0;
+    for (uint64_t partition = 0; partition < numPartitions; ++partition)
+    {
+        std::vector<UniqueEntry> unique = expandPartition(level, c, partition, numPartitions, numThreads);
+        numUnique += unique.size();
+        auto gpuStart = std::chrono::high_resolution_clock::now();
+        count += searchWeighted(unique, opponent(c), depth - splitDepth);
+        gpuSeconds += std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - gpuStart).count();
+    }
+
+    double totalSeconds = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start).count();
+    printf("Split at ply %d: %llu unique positions, %llu partitions, CPU %.1f s, GPU search %.1f s\n", splitDepth,
+        static_cast<unsigned long long>(numUnique), static_cast<unsigned long long>(numPartitions), totalSeconds - gpuSeconds, gpuSeconds);
+    return count;
+}
+
 void releaseGpuPerft()
 {
     for (Level& level : levels)
@@ -955,6 +1191,8 @@ void releaseGpuPerft()
         CUDA_CHECK(cudaFree(gpuHashTable.entries));
     }
     CUDA_CHECK(cudaFreeHost(hostBatch));
+    CUDA_CHECK(cudaFreeHost(hostWeights));
+    CUDA_CHECK(cudaFree(deviceWeights));
     CUDA_CHECK(cudaFree(deviceChunk));
     CUDA_CHECK(cudaFreeHost(hostChunk));
     CUDA_CHECK(cudaFreeHost(hostNumUnique));

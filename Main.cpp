@@ -32,12 +32,13 @@ struct PerftParams
     int numberOfWorkers;
     bool collectStats;
     bool useGpu;
+    int splitDepth;
     Position position;
 };
 
 PerftParams parseCommandLine(int argc, char** argv);
 void printUsage();
-void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats, bool useGpu);
+void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats, bool useGpu, int splitDepth);
 
 int main(int argc, char** argv)
 {       
@@ -63,7 +64,7 @@ int main(int argc, char** argv)
     }
 #endif
     
-    testPerft(params.position, params.depth, params.numberOfWorkers, params.collectStats, params.useGpu);
+    testPerft(params.position, params.depth, params.numberOfWorkers, params.collectStats, params.useGpu, params.splitDepth);
 
 #if GPU_PERFT
     if (params.useGpu) releaseGpuPerft();
@@ -88,6 +89,7 @@ PerftParams parseCommandLine(int argc, char** argv)
     params.numberOfWorkers = 8;
     params.collectStats = false;
     params.useGpu = false;
+    params.splitDepth = 0;
     params.position = Position1;
 
     bool failure = false;
@@ -150,6 +152,15 @@ PerftParams parseCommandLine(int argc, char** argv)
         case 'g':
             params.useGpu = true;
             break;
+        case 'u':
+            if (argc <= i + 1)
+            {
+                failure = true;
+                break;
+            }
+            params.splitDepth = atoi(argv[i + 1]);
+            ++i;
+            break;
 #endif
         case 'f':
             if (argc <= i + 1)
@@ -194,10 +205,12 @@ void printUsage()
     printf("\t-f \"<FEN>\"    Position in FEN notation. Remember to use the quotes.\n");
 #if GPU_PERFT
     printf("\t-g              Search the last plies on the GPU. Without hash table.\n");
+    printf("\t-u <ply>        With -g: search the unique positions after <ply> plies once each, weighted by the\n");
+    printf("\t                number of move sequences that lead to them.\n");
 #endif
 }
 
-void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats, bool useGpu)
+void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collectStats, bool useGpu, int splitDepth)
 {
 #if MULTITHREADED
     if (!collectStats && !useGpu) initMultiPerft(numberOfWorkers);
@@ -215,7 +228,7 @@ void testPerft(const Position& pos, int depth, int numberOfWorkers, bool collect
 #if GPU_PERFT
     else if (useGpu)
     {
-        count = runGpuPerft(pos, depth);
+        count = (splitDepth > 0) ? runGpuPerftSplit(pos, depth, splitDepth) : runGpuPerft(pos, depth);
     }
 #endif
     else

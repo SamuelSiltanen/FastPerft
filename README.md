@@ -22,6 +22,8 @@ Where supported options include:
 
   `-g` Search the last 5 plies on the GPU (see GPU). The CPU expands the tree down to them. The GPU has its own hash table with 128-bit keys, which takes the free GPU memory except for 1 GB, and `-h` doesn't affect it.
 
+  `-u <ply>` With `-g`, build the unique positions after `<ply>` plies on the CPU, with the number of move sequences that lead to each, and search each unique position once on the GPU. The result is the sum of the node counts of the unique positions, multiplied by their numbers of move sequences. This prints the number of unique positions and the CPU and GPU times. For example, `fastperft -g -d 12 -u 7` builds the unique positions after 7 plies (96 million) and searches each to depth 5.
+
 For example, `fastperft -d 6 -f "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -"` counts the nodes of the Kiwipete position at depth 6.
 
 ## Requirements
@@ -74,15 +76,16 @@ On an NVIDIA GeForce RTX 2070 Super:
 
 | Position | Depth | Nodes | Time |
 |---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 0.020 s (159.4 Gnps) |
-| Initial position | 8 | 84 998 978 956 | 0.151 s (562.9 Gnps) |
-| Initial position | 9 | 2 439 530 234 167 | 1.78 s (1370.5 Gnps) |
-| Initial position | 10 | 69 352 859 712 417 | 27.1 s (2561.5 Gnps) |
-| Kiwipete | 6 | 8 031 647 685 | 0.034 s (235.7 Gnps) |
-| Kiwipete | 7 | 374 190 009 323 | 0.398 s (940.2 Gnps) |
-| Kiwipete | 8 | 15 493 944 087 984 | 12.2 s (1270.0 Gnps) |
+| Initial position | 7 | 3 195 901 860 | 0.017 s (192.2 Gnps) |
+| Initial position | 8 | 84 998 978 956 | 0.107 s (797.7 Gnps) |
+| Initial position | 9 | 2 439 530 234 167 | 1.16 s (2102.3 Gnps) |
+| Initial position | 10 | 69 352 859 712 417 | 17.4 s (3997.4 Gnps) |
+| Initial position | 11 | 2 097 651 003 696 806 | 368 s (5701.5 Gnps) |
+| Kiwipete | 6 | 8 031 647 685 | 0.029 s (276.4 Gnps) |
+| Kiwipete | 7 | 374 190 009 323 | 0.385 s (973.0 Gnps) |
+| Kiwipete | 8 | 15 493 944 087 984 | 11.8 s (1310.1 Gnps) |
 
-The GPU hash table has 128-bit keys (`WideHashKeys` in `GpuPerft.cu`). With 64-bit keys, the large searches are 15-30% faster, but a false match in the hash table is much more likely (see `GPU_PLAN.md`). The positions are stored on the GPU in 32 bytes (see `GpuPosition` in `GpuPerft.cu`). The times don't include the initialization of the GPU, and the GPU wasn't used by other programs at the same time. As with the CPU hash table, the speed includes the subtrees found in the hash table and the merged duplicates.
+The GPU hash table has 128-bit keys (`WideHashKeys` in `GpuPerft.cu`). With 64-bit keys, the large searches are 15-30% faster, but a false match in the hash table is much more likely (see `GPU_PLAN.md`). The positions are stored on the GPU in 32 bytes (see `GpuPosition` in `GpuPerft.cu`), without the en passant square if no pawn can capture en passant, so that the positions after a double pawn push are equal to the same positions reached otherwise. The times don't include the initialization of the GPU, and the GPU wasn't used by other programs at the same time. As with the CPU hash table, the speed includes the subtrees found in the hash table and the merged duplicates.
 
 ## Tests
 

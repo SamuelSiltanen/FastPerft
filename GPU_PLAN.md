@@ -266,6 +266,37 @@ Several threads per position (rejected): a group of G threads searched one depth
 - The time grows almost linearly with G, about T(1) x (0.84 + 0.16 G). Generating the moves of a position is about 16% of its work, and with G threads per position, G times as many warps each generate the moves once. Generating them once into shared memory wouldn't help, since the other threads of the group would just wait. The similarity of the children saved much less than that.
 - It would need a data-parallel move generator, where the threads of a group generate different parts of the moves with the same code (e.g. one piece per thread, with branch-free attack calculations), instead of the shared move generator.
 
+### En passant normalization
+
+FastPerft sets the en passant square after every double pawn push. `pack` now leaves it out if no pawn of the side to move is next to the pushed pawn, since then it can't affect any move. Before, a position after a double pawn push was different from the same position reached otherwise, so about a third of the duplicates weren't merged or found in the hash table. The unique positions now match OEIS A083276 (5,362 after 3 plies, 72,078 after 4, 822,518 after 5), except for a few positions where the pawn next to the pushed pawn is pinned (9,417,683 after 6 plies instead of 9,417,681).
+
+| Search | Before | After |
+|---|---|---|
+| Initial position depth 8 | 0.152 s | 0.107 s |
+| Initial position depth 9 | 1.78 s | 1.16 s |
+| Initial position depth 10 | 27.1 s | 17.4 s |
+| Initial position depth 11 | 634 s | 368 s |
+| Kiwipete depth 8 | 12.3 s | 11.8 s |
+
+### Unique positions at a split ply (`-u`)
+
+For perft(n), the CPU builds the unique positions after k plies with their multiplicities (the number of move sequences that lead to each), and the GPU searches each unique position to depth p = n - k once. Then perft(n) = sum of multiplicity x perft(position, p). The positions are expanded one level at a time with 8 threads, which generate the children into buckets by their hash, and sort and merge each bucket. If a level would have more than about 200 million children, it's generated in several passes, each keeping only the children whose hash falls in its partition, so that the memory stays at about 8 GB. The last level isn't stored at all: each partition is searched on the GPU as soon as it's built. If p is more than the GPU depth (5), the CPU expands each unique position the extra plies, with the multiplicity of the unique position.
+
+- Checked against perft(8) from the initial position with split plies 1-6, Kiwipete depth 7, position 4 (mirrored) depth 6, and position 3 depth 8.
+- The device sum is 64-bit, which is enough for perft(13) (1.98 * 10^18), but not for perft(14).
+
+The perft(12) experiment with split plies 4-8 is still to be run (several hours per split ply):
+
+```
+fastperft -g -d 12 -u 7
+fastperft -g -d 12 -u 8
+fastperft -g -d 12 -u 6
+fastperft -g -d 12 -u 5
+fastperft -g -d 12 -u 4
+```
+
+The expected result is 62,854,969,236,701,747.
+
 The hybrid search (the CPU walks the top of the tree with its hash table) is not implemented. The GPU already handles the transpositions below the CPU levels, by merging within a batch and with its hash table between batches, and the CPU levels have only a few hundred thousand positions even at depth 10. Searching part of the tree on the CPU at about 8 Gnps would add less than 2% to the GPU's effective 300-900 Gnps.
 
 ## Testing and measurement
