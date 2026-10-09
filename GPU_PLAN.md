@@ -26,6 +26,20 @@ Goal: the CPU build still passes all tests at the same speed.
 - Tables in one `MoveTables` struct reached through a pointer. On the CPU it points to the existing globals. On the GPU it is copied to device memory, and each block loads the hot parts into shared memory.
 - Check: `Test_FastPerft` passes and the Kiwipete d6 timings are unchanged within noise.
 
+Status: done.
+
+- `MoveGeneration.hpp` and `Make.hpp` include the impl headers, so all translation units see the template bodies. The .cpp files keep the explicit instantiations, the non-template wrappers, and the CPU-only code (table setup, PEXT and magic tables, `generateMovesTo`/`generateCheckEvasions`).
+- The castling tables of `make()` moved into `MoveTables`, and `bishopRays` replaces `BAttacks[sq][0]` (a PEXT table) in the check evasions.
+- `make()` on the GPU does not update the hash key yet (`MAKE_UPDATES_HASH`). That comes with the GPU hash table in phase 4.
+- All 47 tests pass. The CPU got slightly faster, probably because the bodies can be inlined without link-time code generation: Kiwipete d6 (8 threads, no hash table) 0.97 s -> 0.93 s, initial position d7 (1 thread, no hash table) 4.32 s -> 4.21 s.
+- A scratch nvcc build (one thread per position, depth-first, 3 plies on the GPU) gave the correct perft(5) for all 6 test positions.
+
+Findings for phase 1:
+
+- CUDA 12.3 does not support the installed MSVC (14.44). Install CUDA 12.4 or newer. Until then, nvcc needs `-allow-unsupported-compiler -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH`.
+- nvcc rejects `perft<1 - C>` in `Perft.hpp` (int to `Color` template argument), so the GPU code must not include `Perft.hpp`. It has its own kernels anyway.
+- `generateSliders` handles pinned sliders through function pointers, which is an indirect call on the GPU. It's rare, but check it when profiling.
+
 ## Phase 1: Naive kernel (correctness baseline)
 
 - The CPU expands the tree to a split depth and uploads the frontier positions. Each GPU thread runs the existing depth-first `perft<C>` with a local-memory stack (3-4 plies left, bulk counting), and a CUB reduction sums the results.

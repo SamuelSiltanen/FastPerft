@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "Platform.hpp"
+
 #include <cstdint>
 
 constexpr uint64_t TurnWhite = (1ULL << 0);
@@ -59,30 +61,30 @@ struct alignas(2) Move
 {
     uint16_t packed;
 
-    Move() : packed(0) {}
+    FP_HOST_DEVICE Move() : packed(0) {}
 
-    Move(Piece piece, Square src, Square dst)
+    FP_HOST_DEVICE Move(Piece piece, Square src, Square dst)
         : packed(src | (dst << 6) | (piece << 12))
     {}
 
-    Move(Piece piece, unsigned long src, unsigned long dst)
+    FP_HOST_DEVICE Move(Piece piece, unsigned long src, unsigned long dst)
         : packed(static_cast<uint16_t>(src | (dst << 6) | (piece << 12)))
     {}
 
-    Move(Piece piece, uint64_t src, uint64_t dst)
+    FP_HOST_DEVICE Move(Piece piece, uint64_t src, uint64_t dst)
         : packed(static_cast<uint16_t>(src | (dst << 6)) | (piece << 12))
     {}
 
-    Move(Piece piece, unsigned long src, unsigned long dst, Piece prom)
+    FP_HOST_DEVICE Move(Piece piece, unsigned long src, unsigned long dst, Piece prom)
         : packed(static_cast<uint16_t>(src | (dst << 6) | 0x8000) | (prom << 12))
     {}
 
-    bool operator==(const Move& other) const { return other.packed == packed; }
+    FP_HOST_DEVICE bool operator==(const Move& other) const { return other.packed == packed; }
 
-    __forceinline uint16_t src() const { return packed & 0x3f; }
-    __forceinline uint16_t dst() const { return (packed >> 6) & 0x3f; }
-    __forceinline Piece piece() const { return (packed & 0x8000) ? Pawn : static_cast<Piece>(packed >> 12); }
-    __forceinline Piece prom() const { return (packed & 0x8000) ? static_cast<Piece>((packed >> 12) & 7) : None; }
+    FP_INLINE uint16_t src() const { return packed & 0x3f; }
+    FP_INLINE uint16_t dst() const { return (packed >> 6) & 0x3f; }
+    FP_INLINE Piece piece() const { return (packed & 0x8000) ? Pawn : static_cast<Piece>(packed >> 12); }
+    FP_INLINE Piece prom() const { return (packed & 0x8000) ? static_cast<Piece>((packed >> 12) & 7) : None; }
 };
 
 struct MoveHash

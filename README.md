@@ -37,7 +37,7 @@ The features are selected at compile time in `Config.hpp`:
   `HASH_TABLE` Store node counts of subtrees in a hash table. Enabled by default. When enabled, `make` also updates the hash key, but it skips the updates if the hash table is disabled with `-h -1`.
 
 
-The sliding piece attack lookup method is selected at the top of `MoveGeneration.cpp` (`PEXT_INTRINSIC`, `KINDERGARTEN_BITBOARDS`, `MAGIC_BITBOARDS`).
+The sliding piece attack lookup method is selected at the top of `MoveTables.hpp` (`PEXT_INTRINSIC`, `KINDERGARTEN_BITBOARDS`, `MAGIC_BITBOARDS`).
 
 ## Performance
 

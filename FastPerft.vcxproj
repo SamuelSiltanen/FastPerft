@@ -29,6 +29,10 @@
     <ClInclude Include="Stats.hpp" />
     <ClInclude Include="TestPositions.hpp" />
     <ClInclude Include="WorkQueue.hpp" />
+    <ClInclude Include="MakeImpl.hpp" />
+    <ClInclude Include="MoveGenerationImpl.hpp" />
+    <ClInclude Include="MoveTables.hpp" />
+    <ClInclude Include="Platform.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HashTable.cpp" />
