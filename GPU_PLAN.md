@@ -191,6 +191,27 @@ The search is 1.4-2.4x faster than at the end of phase 4. Measurements (initial 
 - The register limit (3 blocks per SM), the level capacity (2M-8M), and GPU depth 7 make no difference or are slower.
 - Initial position depth 10: 73.1 s -> 30.2 s.
 
+### 128-bit hash keys
+
+`WideHashKeys` (enabled) stores two 64-bit keys in 32-byte entries, written as two 16-byte halves. The second half has the second key XORed with the data, so an entry with halves from two writes doesn't match. The bucket comes from the second key, so 128 - log2(buckets) = 103 bits (with a 4 GB table) separate the positions in a bucket, and a false match is about 2^-102 per lookup with 2 entries per bucket, against 2^-62 with 64-bit keys and 4 entries per bucket.
+
+Splitting a computation into separate runs with their own hash tables doesn't change the risk: a lookup compares the key with the few entries of one bucket, regardless of the table size, so the expected number of false matches is the total number of lookups of all runs times the probability per lookup. Separate runs only make the errors easier to find, if each unit is run twice with different keys.
+
+Measurements (initial position depth 8 / depth 9 / Kiwipete depth 8 / initial position depth 10, in seconds):
+
+| Keys | Table | Entries | Time |
+|---|---|---|---|
+| 64-bit, 4 per bucket | 2 GB | 128M | 0.157 / 1.89 / 13.2 / 31.4 |
+| 64-bit, 4 per bucket | 1 GB | 64M | 0.160 / 2.37 / 15.5 / 40.0 |
+| 64-bit, 4 per bucket | 4 GB | 256M | 0.160 / 1.71 / 10.8 / 26.0 |
+| 128-bit, 2 per bucket | 2 GB | 64M | 0.163 / 2.33 / 17.2 / 38.5 |
+| 128-bit, 4 per bucket | 2 GB | 64M | 0.171 / 2.64 / 16.4 / 43.2 |
+| 128-bit, 2 per bucket | 4 GB | 128M | 0.162 / 1.97 / 14.0 / 30.7 |
+
+- With the same number of entries, 128-bit keys cost about 5% (the bigger entries take more memory bandwidth). With the same memory, they cost 15-30%, because the table has half as many entries, and the large searches still get faster with more entries.
+- 2 entries per bucket (one 64-byte cache line) is faster than 4 (two cache lines).
+- The default is 128-bit keys in a 4 GB table, which is about as fast as the earlier 64-bit keys in a 2 GB table. The GPU uses about 6 GB at most. For the fastest search, use 64-bit keys in a 4 GB table.
+
 The hybrid search (the CPU walks the top of the tree with its hash table) is not implemented. The GPU already handles the transpositions below the CPU levels, by merging within a batch and with its hash table between batches, and the CPU levels have only a few hundred thousand positions even at depth 10. Searching part of the tree on the CPU at about 8 Gnps would add less than 2% to the GPU's effective 300-900 Gnps.
 
 ## Testing and measurement

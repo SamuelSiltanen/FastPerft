@@ -51,8 +51,12 @@ constexpr int LeafMinBlocks = 3; // Minimum blocks per SM for the leaf kernel, l
 constexpr int MaxMoves = 256; // At most 218 legal moves in any position
 
 constexpr bool UseHashTable = true;
-constexpr int HashTableSizeExp = 25; // Number of buckets as an exponent of 2. A bucket has 4 entries of 16 bytes, so 2^25 buckets take 2 GB.
-constexpr int HashBucketSize = 4;
+constexpr size_t HashTableBytes = 4ULL << 30; // 4 GB
+constexpr bool WideHashKeys = true; // 128-bit keys in 32-byte entries instead of 64-bit keys in 16-byte entries
+constexpr int HashBucketSize = 2; // Entries per bucket
+constexpr int SlotHalves = WideHashKeys ? 2 : 1; // An entry is read and written in 16-byte halves
+constexpr size_t NumHashBuckets = HashTableBytes / (HashBucketSize * SlotHalves * sizeof(ulonglong2));
+static_assert((NumHashBuckets & (NumHashBuckets - 1)) == 0, "The number of buckets must be a power of 2");
 constexpr int MinHashDepth = 2; // Depth-1 counts are faster to calculate than to look up
 constexpr uint64_t HashCountMask = (1ULL << 56) - 1; // The count is in the low 56 bits of the data, and the depth in the high 8 bits
 constexpr uint64_t UnknownCount = ~0ULL;
@@ -289,41 +293,64 @@ __global__ void mergeKernel(const Position* positions, const uint32_t* sortedInd
     }
 }
 
-// The key is stored XORed with the data. If two threads write the same slot at the same time, the slot may get the
-// key from one and the data from the other, and then the key doesn't match the data, like in the CPU hash table.
-struct alignas(16) GpuHashSlot
+// An entry has the first 64-bit key XORed with the data, and the data: the depth in the high 8 bits and the node
+// count in the low 56 bits, zero for an empty entry. With wide keys, a second half has the second 64-bit key XORed
+// with the data. If two threads write the same entry at the same time, the entry may get parts from both, and then
+// the keys don't match the data, like in the CPU hash table. The bucket comes from the second key, so with wide keys,
+// 128 - log2(NumHashBuckets) bits of the keys separate the positions in a bucket.
+struct HashKeys
 {
-    uint64_t keyXorData;
-    uint64_t data; // Depth in the high 8 bits, node count in the low 56 bits. Zero for an empty slot.
+    uint64_t key1;
+    uint64_t key2;
 };
 
-__device__ __forceinline__ GpuHashSlot loadSlot(const GpuHashSlot* slot)
+__device__ __forceinline__ HashKeys hashKeys(const Position& pos)
 {
-    ulonglong2 value = *reinterpret_cast<const ulonglong2*>(slot);
-    return { value.x, value.y };
+    return { hashKey(pos), hashIndex(pos) };
 }
 
-__device__ __forceinline__ void storeSlot(GpuHashSlot* slot, uint64_t key, uint64_t data)
+__device__ __forceinline__ ulonglong2* hashBucket(ulonglong2* table, const HashKeys& keys)
 {
-    *reinterpret_cast<ulonglong2*>(slot) = make_ulonglong2(key ^ data, data);
+    return table + (keys.key2 & (NumHashBuckets - 1)) * HashBucketSize * SlotHalves;
 }
 
-__global__ void probeKernel(const Position* positions, uint32_t numPositions, uint64_t depth, const GpuHashSlot* table, uint64_t bucketMask,
-    uint64_t* nodeCounts)
+// Returns the data of the entry if its keys match, and zero otherwise
+__device__ __forceinline__ uint64_t matchEntry(const ulonglong2* entry, const HashKeys& keys)
+{
+    ulonglong2 first = entry[0];
+    uint64_t data = first.y;
+    if ((first.x ^ data) != keys.key1) return 0;
+    if constexpr (WideHashKeys)
+    {
+        ulonglong2 second = entry[1];
+        if ((second.x ^ data) != keys.key2) return 0;
+    }
+    return data;
+}
+
+__device__ __forceinline__ void storeEntry(ulonglong2* entry, const HashKeys& keys, uint64_t data)
+{
+    entry[0] = make_ulonglong2(keys.key1 ^ data, data);
+    if constexpr (WideHashKeys)
+    {
+        entry[1] = make_ulonglong2(keys.key2 ^ data, 0);
+    }
+}
+
+__global__ void probeKernel(const Position* positions, uint32_t numPositions, uint64_t depth, ulonglong2* table, uint64_t* nodeCounts)
 {
     uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index < numPositions)
     {
-        const Position& pos = positions[index];
-        uint64_t key = hashKey(pos);
-        const GpuHashSlot* bucket = table + (hashIndex(pos) & bucketMask) * HashBucketSize;
+        HashKeys keys = hashKeys(positions[index]);
+        const ulonglong2* bucket = hashBucket(table, keys);
         uint64_t count = UnknownCount;
         for (int i = 0; i < HashBucketSize; ++i)
         {
-            GpuHashSlot slot = loadSlot(bucket + i);
-            if ((slot.keyXorData ^ slot.data) == key && (slot.data >> 56) == depth)
+            uint64_t data = matchEntry(bucket + i * SlotHalves, keys);
+            if (data != 0 && (data >> 56) == depth)
             {
-                count = slot.data & HashCountMask;
+                count = data & HashCountMask;
                 break;
             }
         }
@@ -332,9 +359,9 @@ __global__ void probeKernel(const Position* positions, uint32_t numPositions, ui
 }
 
 // Stores the node counts of the positions given by the indices, or of all positions if there are no indices.
-// Replaces the same position, an empty slot, or the slot with the smallest depth.
+// Replaces the same position, an empty entry, or the entry with the smallest depth.
 __global__ void insertKernel(const Position* positions, const uint32_t* indices, const uint32_t* numIndices, uint32_t numPositions,
-    uint64_t depth, const uint64_t* nodeCounts, GpuHashSlot* table, uint64_t bucketMask)
+    uint64_t depth, const uint64_t* nodeCounts, ulonglong2* table)
 {
     uint32_t thread = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t count = indices ? *numIndices : numPositions;
@@ -343,27 +370,26 @@ __global__ void insertKernel(const Position* positions, const uint32_t* indices,
     uint32_t index = indices ? indices[thread] : thread;
     if (nodeCounts[index] <= HashCountMask)
     {
-        const Position& pos = positions[index];
-        uint64_t key = hashKey(pos);
-        GpuHashSlot* bucket = table + (hashIndex(pos) & bucketMask) * HashBucketSize;
+        HashKeys keys = hashKeys(positions[index]);
+        ulonglong2* bucket = hashBucket(table, keys);
         int victim = 0;
         uint64_t victimDepth = ~0ULL;
         for (int i = 0; i < HashBucketSize; ++i)
         {
-            GpuHashSlot slot = loadSlot(bucket + i);
-            uint64_t slotDepth = slot.data >> 56;
-            if (slot.data == 0 || ((slot.keyXorData ^ slot.data) == key && slotDepth == depth))
+            uint64_t entryData = bucket[i * SlotHalves].y;
+            uint64_t entryDepth = entryData >> 56;
+            if (entryData == 0 || (entryDepth == depth && matchEntry(bucket + i * SlotHalves, keys) != 0))
             {
                 victim = i;
                 break;
             }
-            if (slotDepth < victimDepth)
+            if (entryDepth < victimDepth)
             {
-                victimDepth = slotDepth;
+                victimDepth = entryDepth;
                 victim = i;
             }
         }
-        storeSlot(bucket + victim, key, (depth << 56) | nodeCounts[index]);
+        storeEntry(bucket + victim * SlotHalves, keys, (depth << 56) | nodeCounts[index]);
     }
 }
 
@@ -461,8 +487,7 @@ struct Merge
 
 Level levels[NumLevels];
 Merge merge;
-GpuHashSlot* gpuHashTable;
-uint64_t bucketMask;
+ulonglong2* gpuHashTable;
 Position* hostBatch; // Pinned, so that the copy to the GPU is fast
 uint32_t* deviceChunk; // End and number of moves of a chunk
 uint32_t* hostChunk;
@@ -537,7 +562,7 @@ void searchLevel(int levelIndex, uint32_t numPositions, int depth)
     bool useHashTable = UseHashTable && depth >= MinHashDepth;
     if (useHashTable)
     {
-        probeKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, numPositions, depth, gpuHashTable, bucketMask, level.nodeCounts);
+        probeKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, numPositions, depth, gpuHashTable, level.nodeCounts);
     }
     else
     {
@@ -568,7 +593,7 @@ void searchLevel(int levelIndex, uint32_t numPositions, int depth)
             }
             launchLeafKernel<C>(depth, level.positions, indices, deviceNumSelected, numPositions, level.nodeCounts);
             insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, indices, deviceNumSelected, numPositions, depth,
-                level.nodeCounts, gpuHashTable, bucketMask);
+                level.nodeCounts, gpuHashTable);
             CUDA_CHECK(cudaGetLastError());
         }
         else
@@ -615,7 +640,7 @@ void searchLevel(int levelIndex, uint32_t numPositions, int depth)
     if (useHashTable)
     {
         insertKernel<<<numBlocks(numPositions), BlockSize>>>(level.positions, nullptr, nullptr, numPositions, depth, level.nodeCounts,
-            gpuHashTable, bucketMask);
+            gpuHashTable);
         CUDA_CHECK(cudaGetLastError());
     }
 }
@@ -748,10 +773,8 @@ bool initGpuPerft()
 
     if (UseHashTable)
     {
-        size_t numBuckets = 1ULL << HashTableSizeExp;
-        bucketMask = numBuckets - 1;
-        CUDA_CHECK(cudaMalloc(&gpuHashTable, numBuckets * HashBucketSize * sizeof(GpuHashSlot)));
-        CUDA_CHECK(cudaMemset(gpuHashTable, 0, numBuckets * HashBucketSize * sizeof(GpuHashSlot)));
+        CUDA_CHECK(cudaMalloc(&gpuHashTable, HashTableBytes));
+        CUDA_CHECK(cudaMemset(gpuHashTable, 0, HashTableBytes));
     }
 
     CUDA_CHECK(cudaMallocHost(&hostBatch, BatchSize * sizeof(Position)));
@@ -764,7 +787,7 @@ bool initGpuPerft()
     runGpuPerft(Position(), MaxGpuDepth);
     if (UseHashTable)
     {
-        CUDA_CHECK(cudaMemset(gpuHashTable, 0, (bucketMask + 1) * HashBucketSize * sizeof(GpuHashSlot)));
+        CUDA_CHECK(cudaMemset(gpuHashTable, 0, HashTableBytes));
     }
     CUDA_CHECK(cudaDeviceSynchronize()); // cudaMemset is asynchronous, so wait for it here instead of in the first search
 

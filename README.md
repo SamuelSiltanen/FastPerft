@@ -20,7 +20,7 @@ Where supported options include:
   
   `-s` Print stats of the leaf nodes: captures, en passants, castles, promotions, checks, discovered checks, double checks, and checkmates, as in https://www.chessprogramming.org/Perft_Results. This uses a slower search without bulk counting and the hash table (see Stats).
 
-  `-g` Search the last 5 plies on the GPU (see GPU). The CPU expands the tree down to them. The GPU has its own hash table (2 GB), and `-h` doesn't affect it.
+  `-g` Search the last 5 plies on the GPU (see GPU). The CPU expands the tree down to them. The GPU has its own hash table (4 GB, with 128-bit keys), and `-h` doesn't affect it.
 
 For example, `fastperft -d 6 -f "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -"` counts the nodes of the Kiwipete position at depth 6.
 
@@ -75,14 +75,14 @@ On an NVIDIA GeForce RTX 2070 Super:
 | Position | Depth | Nodes | Time |
 |---|---|---|---|
 | Initial position | 7 | 3 195 901 860 | 0.020 s (159.4 Gnps) |
-| Initial position | 8 | 84 998 978 956 | 0.160 s (529.6 Gnps) |
-| Initial position | 9 | 2 439 530 234 167 | 1.87 s (1306.7 Gnps) |
-| Initial position | 10 | 69 352 859 712 417 | 30.2 s (2296.2 Gnps) |
+| Initial position | 8 | 84 998 978 956 | 0.162 s (524.7 Gnps) |
+| Initial position | 9 | 2 439 530 234 167 | 1.97 s (1237.7 Gnps) |
+| Initial position | 10 | 69 352 859 712 417 | 30.7 s (2258.2 Gnps) |
 | Kiwipete | 6 | 8 031 647 685 | 0.034 s (235.7 Gnps) |
-| Kiwipete | 7 | 374 190 009 323 | 0.416 s (899.5 Gnps) |
-| Kiwipete | 8 | 15 493 944 087 984 | 13.0 s (1195.1 Gnps) |
+| Kiwipete | 7 | 374 190 009 323 | 0.426 s (878.4 Gnps) |
+| Kiwipete | 8 | 15 493 944 087 984 | 14.0 s (1104.5 Gnps) |
 
-The times don't include the initialization of the GPU. As with the CPU hash table, the speed includes the subtrees found in the hash table and the merged duplicates.
+The GPU hash table has 128-bit keys (`WideHashKeys` in `GpuPerft.cu`). With 64-bit keys, the large searches are 15-30% faster, but a false match in the hash table is much more likely (see `GPU_PLAN.md`). The times don't include the initialization of the GPU. As with the CPU hash table, the speed includes the subtrees found in the hash table and the merged duplicates.
 
 ## Tests
 
