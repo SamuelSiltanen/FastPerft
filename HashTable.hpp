@@ -8,6 +8,7 @@
 
 #include <cassert>
 #include <atomic>
+#include <xmmintrin.h>
 
 //#define HASH_DEBUG
 
@@ -106,6 +107,13 @@ public:
 
     bool insert(const HashEntry& entry);
     uint64_t find(const Position& pos, uint16_t depth);
+
+    // Starts loading the cache line that find and insert use for the hash key
+    void prefetch(uint64_t hash) const
+    {
+        uint32_t cacheLineStartIndex = static_cast<uint32_t>(hash & (m_size - 1)) & 0xfffffffc;
+        _mm_prefetch(reinterpret_cast<const char*>(&m_hashTable[cacheLineStartIndex]), _MM_HINT_T0);
+    }
     void clear();
 
     struct alignas(64) Hashes

@@ -189,11 +189,16 @@ uint64_t runMultiPerft(const Position& pos, int depth)
 void releaseMultiPerft()
 {
     runState = RunState::Exiting;
+
+    // Join all workers before releasing anything, because a worker may still try to steal from any queue
     for (int i = 0; i < numWorkerThreads; i++)
     {
         worker[i]->join();
         delete worker[i];
+    }
 
+    for (int i = 0; i < numWorkerThreads; i++)
+    {
         if (workQueue[i])
         {
             delete workQueue[i];

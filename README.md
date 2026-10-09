@@ -45,9 +45,9 @@ On an Intel Core i7-9700K (8 cores, no hyper-threading). The times don't include
 
 | Position | Depth | Nodes | 1 thread, no hash table | 8 threads, no hash table | 1 thread, hash table | 8 threads, hash table (default) |
 |---|---|---|---|---|---|---|
-| Initial position | 7 | 3 195 901 860 | 4.3 s (735 Mnps) | 0.61 s (5.3 Gnps) | 1.5 s (2.1 Gnps) | 0.21 s (15.4 Gnps) |
-| Initial position | 8 | 84 998 978 956 | 118.4 s (718 Mnps) | 16.2 s (5.2 Gnps) | 19.1 s (4.5 Gnps) | 2.6 s (32.3 Gnps) |
-| Kiwipete | 6 | 8 031 647 685 | 7.3 s (1099 Mnps) | 0.96 s (8.4 Gnps) | 2.9 s (2.8 Gnps) | 0.39 s (20.8 Gnps) |
+| Initial position | 7 | 3 195 901 860 | 4.3 s (735 Mnps) | 0.61 s (5.3 Gnps) | 1.5 s (2.2 Gnps) | 0.20 s (15.9 Gnps) |
+| Initial position | 8 | 84 998 978 956 | 118.4 s (718 Mnps) | 16.2 s (5.2 Gnps) | 18.4 s (4.6 Gnps) | 2.5 s (34.7 Gnps) |
+| Kiwipete | 6 | 8 031 647 685 | 7.3 s (1099 Mnps) | 0.96 s (8.4 Gnps) | 2.8 s (2.9 Gnps) | 0.37 s (21.6 Gnps) |
 
 The multithreading scales almost linearly with the number of cores. Kiwipete at depth 6, compiled without the hash table:
 
@@ -99,6 +99,7 @@ Some findings from optimizing the move generator:
 - Use `_tzcnt_u64` instead of `_BitScanForward64` to find the next square in a loop. On Intel, the BSF instruction depends on the previous value of its destination register, which can serialize the attack table lookups of consecutive loop iterations. Whether this happens depends on the compiler's register allocation, so it can appear or disappear with unrelated code changes.
 - Small code changes can change the speed by 10-20 % through the compiler's register allocation and inlining decisions, so it's worth checking the disassembly when a change behaves unexpectedly. Force-inlining the color templated functions into `perft` gave several percent speedup, because the pins and other intermediate results can stay in registers.
 - Several seemingly cheaper alternatives were measured to be slower: checking only the king's target squares instead of computing the whole protection area, finding pins with x-ray PEXT attacks, and computing knight attacks with shifts.
+- With the hash table, prefetching the hash table entries of the children gave 3-9 % speedup. Not storing the nodes at depth 2 in the hash table (`MinHashDepth` 3) halved the speed. Using the hash table also at the levels handled by the work queues, helping other threads while waiting for them, and always replacing the entry with the smallest node count gave no measurable gain. Smaller work items (`MinWorkItemDepth` 3) were clearly slower.
 
 ### Stats
 
@@ -119,3 +120,5 @@ The multithreading is enabled by default (see Configuration). Every level deeper
 The hash table uses Zobrist hashing (https://www.chessprogramming.org/Zobrist_Hashing) for generating and keeping up to date 64-bit hash keys. Those are then mapped into a hash table, where each entry stores the hash key, depth, and node count. The hash table utilizes the fact that the entries are updated cache line at a time. If a collision occurs, it may use any of the other entry slots on the same cache line. If all of the slots are taken, it replaces the one with the lowest node count. The hash table is not used at the last levels (`MinHashDepth`), because there, the memory access is slower than counting the moves.
 
 The hash table is shared by all threads without locks, using lockless hashing (https://www.chessprogramming.org/Shared_Hash_Table#Lockless). Each entry is two 64-bit words, the data (depth and node count) and the key XORed with the data. They are written and read separately, so a thread can read an entry while another thread is writing it, and get the key from one entry and the data from another. Then the key XORed with the data doesn't match the probed hash key, so the torn entry is ignored instead of giving a wrong node count. A lost or ignored entry only affects the performance, not the results. (A `std::atomic` of the whole 16-byte entry is not lock-free with MSVC, and it uses 32 bytes per entry.)
+
+The hash table entries don't fit in the caches, so the probes are slow. When the children of a node are searched, the next child is made before searching the current one, and its hash table entry is prefetched, so that the memory access overlaps with the search of the current child.

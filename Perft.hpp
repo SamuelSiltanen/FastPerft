@@ -84,11 +84,41 @@ uint64_t perft(const Position& pos, int depth, Move* stack)
 
         uint64_t count = 0;
 
-        for (--stack; stack >= stack0; --stack)
+#if HASH_TABLE
+        if (hashTable && depth - 1 >= MinHashDepth && stack > stack0)
         {
-            const Move& move = *stack;
-            Position tmpPos = make<C>(pos, move);
-            count += perft<1 - C>(tmpPos, depth - 1, stack);
+            // The children probe the hash table. Make the next child before searching the current one,
+            // and prefetch its hash table entry, so that the memory access overlaps the search.
+            --stack;
+            Position child = make<C>(pos, *stack);
+            hashTable->prefetch(child.hash);
+            for (;;)
+            {
+                Move* nextMove = stack - 1;
+                bool hasNext = nextMove >= stack0;
+                Position nextChild;
+                if (hasNext)
+                {
+                    nextChild = make<C>(pos, *nextMove);
+                    hashTable->prefetch(nextChild.hash);
+                }
+
+                count += perft<1 - C>(child, depth - 1, stack);
+
+                if (!hasNext) break;
+                child = nextChild;
+                stack = nextMove;
+            }
+        }
+        else
+#endif
+        {
+            for (--stack; stack >= stack0; --stack)
+            {
+                const Move& move = *stack;
+                Position tmpPos = make<C>(pos, move);
+                count += perft<1 - C>(tmpPos, depth - 1, stack);
+            }
         }
 
 #if HASH_TABLE
